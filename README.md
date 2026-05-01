@@ -30,7 +30,9 @@ Branch the current Copilot CLI session, creating a new session that inherits con
 
 **Features:**
 - Copies full session state (events, workspace config)
+- Assigns each branch a unique Copilot CLI resume title like `Branch: <title> [<id>]`
 - Tracks lineage via `branch_of` / `branch_note` in `workspace.yaml`
+- Removes stale in-use locks from the branched session
 - Resets checkpoints and rewind snapshots for a clean slate
 - Optional truncation ("branch from N turns ago")
 - Optional git worktree integration

@@ -26,61 +26,164 @@ The current session ID is in `<session_context>` → session folder path.
 Run the following as a single bash script, substituting `CURRENT_SESSION_ID` with the actual value:
 
 ```bash
-set -e
+set -euo pipefail
 
 CURRENT_SESSION_ID="<current-session-id>"
 STATE_DIR="$HOME/.copilot/session-state"
 CURRENT_SESSION="$STATE_DIR/$CURRENT_SESSION_ID"
-NEW_SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)}"
+if [ -z "$PYTHON_BIN" ]; then
+  echo "Python 3 is required to branch a session" >&2
+  exit 1
+fi
+NEW_SESSION_ID=$("$PYTHON_BIN" -c 'import uuid; print(uuid.uuid4())')
 NEW_SESSION="$STATE_DIR/$NEW_SESSION_ID"
 
-# Get current summary for branch note
-CURRENT_SUMMARY=$(grep '^summary:' "$CURRENT_SESSION/workspace.yaml" | head -1 | sed 's/^summary: //')
-
-# Copy entire session
-cp -r "$CURRENT_SESSION" "$NEW_SESSION"
-
-# Update workspace.yaml: new ID + branch metadata
-sed -i "s/^id: .*/id: $NEW_SESSION_ID/" "$NEW_SESSION/workspace.yaml"
-# Add branch tracking fields (copilot overwrites summary, but preserves unknown fields)
-cat >> "$NEW_SESSION/workspace.yaml" << EOF
-branch_of: $CURRENT_SESSION_ID
-branch_note: "Branched from: $CURRENT_SUMMARY"
-EOF
-
-# Fix session.start event to reference new session ID
-python3 -c "
+"$PYTHON_BIN" - "$CURRENT_SESSION" "$NEW_SESSION" "$CURRENT_SESSION_ID" "$NEW_SESSION_ID" <<'PY'
+import datetime as dt
 import json
-lines = open('$NEW_SESSION/events.jsonl').readlines()
-new_lines = []
-for line in lines:
-    evt = json.loads(line.strip())
-    if evt['type'] == 'session.start':
-        evt['data']['sessionId'] = '$NEW_SESSION_ID'
-    new_lines.append(json.dumps(evt, separators=(',', ':')))
-with open('$NEW_SESSION/events.jsonl', 'w') as f:
-    f.write('\n'.join(new_lines) + '\n')
-"
+import shutil
+import sys
+from pathlib import Path
 
-# Reset rewind snapshots (they reference old event state)
-echo '{"version":1,"snapshots":[],"filePathMap":{}}' > "$NEW_SESSION/rewind-snapshots/index.json"
-rm -rf "$NEW_SESSION/rewind-snapshots/backups"/* 2>/dev/null || true
+current_session = Path(sys.argv[1])
+new_session = Path(sys.argv[2])
+current_session_id = sys.argv[3]
+new_session_id = sys.argv[4]
 
-# Reset session database (contains old session references)
-rm -f "$NEW_SESSION/session.db" 2>/dev/null || true
+workspace_path = current_session / "workspace.yaml"
+if not workspace_path.exists():
+    raise SystemExit(f"Missing workspace metadata: {workspace_path}")
+if new_session.exists():
+    raise SystemExit(f"Branch destination already exists: {new_session}")
 
-# Reset checkpoints
-cat > "$NEW_SESSION/checkpoints/index.md" << 'CKPT'
-# Checkpoint History
 
-Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.
+def parse_scalar(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value[1:-1]
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
 
-| # | Title | File |
-|---|-------|------|
-CKPT
 
-echo "NEW_SESSION_ID=$NEW_SESSION_ID"
+def read_top_level_fields(path):
+    fields = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith(" ") and ":" in line:
+            key, value = line.split(":", 1)
+            fields[key] = parse_scalar(value)
+    return fields
+
+
+def yaml_string(value):
+    return json.dumps(value, ensure_ascii=True)
+
+
+def compact(value, max_len=72):
+    value = " ".join((value or "").split())
+    if len(value) <= max_len:
+        return value
+    return value[: max_len - 3].rstrip() + "..."
+
+
+def set_top_level(lines, key, value):
+    prefix = f"{key}:"
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = f"{key}: {value}"
+            return
+    lines.append(f"{key}: {value}")
+
+
+current_fields = read_top_level_fields(workspace_path)
+base_title = (
+    current_fields.get("name")
+    or current_fields.get("summary")
+    or f"Session {current_session_id[:8]}"
+)
+branch_title = f"Branch: {compact(base_title)} [{new_session_id[:8]}]"
+now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+# Copy the session, then rewrite identity and title metadata in the branch.
+shutil.copytree(current_session, new_session)
+
+new_workspace_path = new_session / "workspace.yaml"
+workspace_lines = new_workspace_path.read_text(encoding="utf-8").splitlines()
+set_top_level(workspace_lines, "id", new_session_id)
+set_top_level(workspace_lines, "name", yaml_string(branch_title))
+set_top_level(workspace_lines, "user_named", "true")
+set_top_level(workspace_lines, "summary", yaml_string(branch_title))
+set_top_level(workspace_lines, "created_at", now)
+set_top_level(workspace_lines, "updated_at", now)
+set_top_level(workspace_lines, "branch_of", current_session_id)
+set_top_level(
+    workspace_lines,
+    "branch_note",
+    yaml_string(f"Branched from: {base_title} ({current_session_id})"),
+)
+new_workspace_path.write_text("\n".join(workspace_lines) + "\n", encoding="utf-8")
+
+# Fix session.start event metadata to reference the new session ID.
+events_path = new_session / "events.jsonl"
+if events_path.exists():
+    rewritten_events = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get("type") == "session.start":
+            data = event.setdefault("data", {})
+            data["sessionId"] = new_session_id
+            if "alreadyInUse" in data:
+                data["alreadyInUse"] = False
+            for key in ("name", "title", "summary"):
+                if key in data:
+                    data[key] = branch_title
+        rewritten_events.append(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
+    events_path.write_text("\n".join(rewritten_events) + "\n", encoding="utf-8")
+
+# Reset rewind snapshots (they reference old event state).
+rewind_dir = new_session / "rewind-snapshots"
+rewind_dir.mkdir(exist_ok=True)
+(rewind_dir / "index.json").write_text(
+    '{"version":1,"snapshots":[],"filePathMap":{}}\n',
+    encoding="utf-8",
+)
+backup_dir = rewind_dir / "backups"
+if backup_dir.exists():
+    for child in backup_dir.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+# Reset per-session database and stale in-use locks.
+for path in [new_session / "session.db", *new_session.glob("inuse.*.lock")]:
+    if path.exists():
+        path.unlink()
+
+# Reset checkpoints.
+checkpoint_dir = new_session / "checkpoints"
+checkpoint_dir.mkdir(exist_ok=True)
+(checkpoint_dir / "index.md").write_text(
+    "# Checkpoint History\n\n"
+    "Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.\n\n"
+    "| # | Title | File |\n"
+    "|---|-------|------|\n",
+    encoding="utf-8",
+)
+
+print(f"NEW_SESSION_ID={new_session_id}")
+print(f"NEW_SESSION_NAME={branch_title}")
+PY
 ```
+
+Use the printed `NEW_SESSION_ID` and `NEW_SESSION_NAME` values in the success
+message.
 
 ### 3. Report Success
 
@@ -98,21 +201,28 @@ Include those flags in the resume command:
 
 To start working in the new session:
 
-    cd <cwd> && copilot --resume=<new-session-id> <detected-flags>
+    cd <cwd> && copilot --resume="<new-session-name>" <detected-flags>
 
 To return to this session later:
 
-    cd <original-cwd> && copilot --resume=<current-session-id> <detected-flags>
+    cd <original-cwd> && copilot --resume=<current-session-name-or-id> <detected-flags>
+
+If name matching is ambiguous for any reason, resume by ID:
+
+    cd <cwd> && copilot --resume=<new-session-id> <detected-flags>
 ```
 
 If a worktree was created, the `cd` should point to the worktree directory instead:
 
 ```
-    cd <worktree-dir> && copilot --resume=<new-session-id> <detected-flags>
+    cd <worktree-dir> && copilot --resume="<new-session-name>" <detected-flags>
 ```
 
-**Important:** The session picker (`copilot --resume`) does NOT visually distinguish branches.
-To identify branches later, the user can run:
+**Important:** Copilot CLI now uses the `name` field in `workspace.yaml` for
+session picker labels and exact `--resume="<name>"` matching. The branch script
+sets `name` to `Branch: <original-title> [<new-id-prefix>]` and `user_named: true`
+so the branch is visually distinct and does not collide with the original title.
+To identify all branches later, the user can run:
 
 ```bash
 grep -l 'branch_of' ~/.copilot/session-state/*/workspace.yaml | while read f; do
@@ -126,7 +236,7 @@ done
 If user says "branch from N turns ago", truncate events.jsonl to remove the last N turns:
 
 ```bash
-python3 -c "
+"$PYTHON_BIN" -c "
 import json, sys
 
 turns_back = int(sys.argv[1])
@@ -156,8 +266,11 @@ print(f'Truncated to {len(events)} events (removed last {turns_back} turns)')
 - The original session is never modified
 - Rewind/checkpoint history starts fresh in the branch
 - Session database (session.db) is removed in the branch to avoid stale references
+- Stale `inuse.*.lock` files are removed from the branch so it does not inherit the original session's in-use marker
+- `name` in workspace.yaml is the Copilot CLI resume title. The branch title includes the new session ID prefix to keep exact name matching unambiguous
+- `user_named: true` keeps Copilot from replacing the branch title with the same auto-generated title as the original session
+- `summary` is updated for older picker/search surfaces, but it may still be regenerated later and should not be the only branch identifier
 - `branch_of` and `branch_note` fields in workspace.yaml track lineage (copilot preserves these custom fields)
-- The `summary` field in workspace.yaml is auto-generated by copilot and CANNOT be used for branch identification — it gets overwritten on next interaction
 
 ## Worktree Branching (Optional)
 
