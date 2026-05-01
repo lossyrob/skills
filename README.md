@@ -4,8 +4,20 @@ Reusable [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) s
 
 ## Install
 
+If you previously installed the plugin directly from the repository, uninstall
+that copy first:
+
 ```bash
-copilot plugin install lossyrob/skills
+copilot plugin uninstall lossyrob-skills
+```
+
+Add this repo as a Copilot CLI plugin marketplace, then install the skills plugin
+from it:
+
+```bash
+copilot plugin marketplace add lossyrob/skills
+copilot plugin marketplace browse lossyrob-skills
+copilot plugin install lossyrob-skills@lossyrob-skills
 ```
 
 ## Skills
