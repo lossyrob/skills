@@ -1,7 +1,7 @@
 ---
 name: odt-convert
 description: Convert ODT (OpenDocument Text) files to Markdown, with a separate threaded comments file. Extracts document body via pandoc and comment threads (with anchor text and reply grouping) via Python XML parsing. Also extracts embedded images and Visio diagrams (with PNG export). Triggers include 'convert odt', 'extract odt comments', 'odt to markdown', or when working with .odt files.
-compatibility: Requires pandoc, Python 3 with standard library. Optional: olefile (pip install olefile) for Visio extraction, libreoffice (headless) for EMF-to-PNG conversion.
+compatibility: "Requires pandoc, Python 3 with standard library. Optional: olefile (pip install olefile) for Visio extraction, libreoffice (headless) for EMF-to-PNG conversion."
 ---
 
 # ODT to Markdown + Comments Skill
