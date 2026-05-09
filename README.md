@@ -22,6 +22,21 @@ copilot plugin install lossyrob-skills@lossyrob-skills
 
 ## Skills
 
+### loop
+
+Repeatedly run a check command or script on a configurable interval until a condition is met, a timeout is reached, or an actionable exit code is returned. Useful for waiting on services, polling PR status, retrying commands, and watching CI/review/mergeability gates before continuing.
+
+**Trigger phrases:** "loop", "wait until", "poll", "watch", "retry", "check every N minutes", "wait for CI", "wait for approval"
+
+**Features:**
+- Cross-platform runners for Bash (`scripts/loop.sh`) and PowerShell (`scripts/loop.ps1`)
+- Fixed interval, timeout, max tries, exponential backoff, jitter, and stability windows
+- Retry-vs-stop exit-code routing so the agent can fix actionable states and restart the loop
+- Optional success action, retry hook, singleton lock, quiet mode, and dry-run output
+- GitHub PR readiness helpers for approval, checks, merge conflicts, closed PRs, and merge race protection
+
+**Requirements:** Bash for macOS/Linux/Git Bash workflows or PowerShell 5.1+/7+. GitHub PR polling requires `gh`.
+
 ### session-branch
 
 Branch the current Copilot CLI session, creating a new session that inherits conversation history up to the current point while preserving the original session intact. Useful for experimentation or parallel development without losing your place.

@@ -5,20 +5,20 @@
   },
   "metadata": {
     "description": "Marketplace for reusable Copilot CLI skills by lossyrob",
-    "version": "0.1.1"
+    "version": "0.1.2"
   },
   "plugins": [
     {
       "name": "lossyrob-skills",
       "description": "Reusable Copilot CLI skills by lossyrob",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "source": ".",
       "author": {
         "name": "Rob Emanuele"
       },
       "repository": "https://github.com/lossyrob/skills",
       "license": "MIT",
-      "keywords": ["copilot", "skills", "session", "odt"]
+      "keywords": ["copilot", "skills", "session", "odt", "loop", "wait", "poll"]
     }
   ]
 }
