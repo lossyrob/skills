@@ -5,6 +5,7 @@ PROGRAM_NAME="$(basename "$0")"
 
 CHECK_COMMAND=""
 ACTION_COMMAND=""
+ACK_COMMAND=""
 ON_RETRY_COMMAND=""
 INTERVAL_SECONDS=30
 MAX_INTERVAL_SECONDS=300
@@ -42,6 +43,7 @@ Required:
 
 Options:
   --action CMD                Run CMD once after the condition succeeds.
+  --ack CMD                   Run CMD only after --action succeeds.
   --on-retry CMD              Run CMD after an unsuccessful retryable attempt.
   --interval SECONDS          Delay between attempts. Default: 30.
   --timeout SECONDS           Wall-clock timeout. 0 disables. Default: 3600.
@@ -69,6 +71,7 @@ Loop environment available to commands:
   LOOP_ATTEMPT
   LOOP_ELAPSED_SECONDS
   LOOP_REMAINING_SECONDS
+  LOOP_CHECK_EXIT_CODE
 EOF
 }
 
@@ -120,6 +123,33 @@ code_in_list() {
 run_command() {
   local command_text="$1"
   bash -c "$command_text"
+}
+
+run_action_and_ack() {
+  local check_exit="$1"
+  if [ -z "$ACTION_COMMAND" ]; then
+    return 0
+  fi
+
+  export LOOP_CHECK_EXIT_CODE="$check_exit"
+
+  log "running action"
+  local action_exit=0
+  run_command "$ACTION_COMMAND" || action_exit=$?
+  if [ "$action_exit" -ne 0 ]; then
+    printf '%s: action command failed with exit %s\n' "$PROGRAM_NAME" "$action_exit" >&2
+    exit "$action_exit"
+  fi
+
+  if [ -n "$ACK_COMMAND" ]; then
+    log "action succeeded; running ack"
+    local ack_exit=0
+    run_command "$ACK_COMMAND" || ack_exit=$?
+    if [ "$ack_exit" -ne 0 ]; then
+      printf '%s: ack command failed with exit %s\n' "$PROGRAM_NAME" "$ack_exit" >&2
+      exit "$ack_exit"
+    fi
+  fi
 }
 
 cleanup() {
@@ -175,6 +205,11 @@ parse_args() {
       --action)
         [ "$#" -ge 2 ] || die "--action requires a command"
         ACTION_COMMAND="$2"
+        shift 2
+        ;;
+      --ack)
+        [ "$#" -ge 2 ] || die "--ack requires a command"
+        ACK_COMMAND="$2"
         shift 2
         ;;
       --on-retry)
@@ -255,6 +290,9 @@ parse_args() {
   done
 
   [ -n "$CHECK_COMMAND" ] || die "--check is required"
+  if [ -n "$ACK_COMMAND" ] && [ -z "$ACTION_COMMAND" ]; then
+    die "--ack requires --action"
+  fi
   require_positive_integer "--interval" "$INTERVAL_SECONDS"
   require_nonnegative_integer "--timeout" "$TIMEOUT_SECONDS"
   require_nonnegative_integer "--max-tries" "$MAX_TRIES"
@@ -301,14 +339,6 @@ is_retryable_failure() {
   return 0
 }
 
-run_success_action() {
-  if [ -z "$ACTION_COMMAND" ]; then
-    return 0
-  fi
-  log "condition met; running action"
-  run_command "$ACTION_COMMAND"
-}
-
 main() {
   parse_args "$@"
   trap cleanup EXIT INT TERM
@@ -318,6 +348,7 @@ main() {
     cat <<EOF
 check=$CHECK_COMMAND
 action=$ACTION_COMMAND
+ack=$ACK_COMMAND
 on_retry=$ON_RETRY_COMMAND
 interval_seconds=$INTERVAL_SECONDS
 timeout_seconds=$TIMEOUT_SECONDS
@@ -356,6 +387,7 @@ EOF
       remaining=0
     fi
 
+    unset LOOP_CHECK_EXIT_CODE 2>/dev/null || true
     export LOOP_ATTEMPT="$attempt"
     export LOOP_ELAPSED_SECONDS="$elapsed"
     export LOOP_REMAINING_SECONDS="$remaining"
@@ -369,16 +401,17 @@ EOF
         log "condition met; waiting ${STABLE_FOR_SECONDS}s stability window"
         interruptible_sleep "$STABLE_FOR_SECONDS"
         local stable_exit=0
+        unset LOOP_CHECK_EXIT_CODE 2>/dev/null || true
         run_command "$CHECK_COMMAND" || stable_exit=$?
         if ! condition_succeeded "$stable_exit"; then
           log "condition did not remain stable; continuing"
           check_exit="$stable_exit"
         else
-          run_success_action
+          run_action_and_ack "$check_exit"
           exit "$EX_SUCCESS"
         fi
       else
-        run_success_action
+        run_action_and_ack "$check_exit"
         exit "$EX_SUCCESS"
       fi
     fi
@@ -387,6 +420,11 @@ EOF
       if [ "$check_exit" -eq 126 ] || [ "$check_exit" -eq 127 ]; then
         printf '%s: check command failed with fatal exit %s\n' "$PROGRAM_NAME" "$check_exit" >&2
         exit "$EX_NOCMD"
+      fi
+      if [ -n "$ACTION_COMMAND" ] && code_in_list "$check_exit" "$STOP_EXIT_CODES"; then
+        log "check returned actionable exit ${check_exit}"
+        run_action_and_ack "$check_exit"
+        exit "$EX_SUCCESS"
       fi
       printf '%s: check stopped with non-retryable exit %s\n' "$PROGRAM_NAME" "$check_exit" >&2
       exit "$check_exit"
@@ -404,6 +442,7 @@ EOF
     fi
 
     if [ -n "$ON_RETRY_COMMAND" ]; then
+      export LOOP_CHECK_EXIT_CODE="$check_exit"
       log "running on-retry hook"
       run_command "$ON_RETRY_COMMAND" || {
         local retry_exit=$?

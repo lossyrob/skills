@@ -5,6 +5,7 @@ param(
     [string]$CheckCommand,
 
     [string]$ActionCommand = '',
+    [string]$AckCommand = '',
     [string]$OnRetryCommand = '',
 
     [ValidateRange(1, [int]::MaxValue)]
@@ -47,6 +48,7 @@ if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction Sile
 
 $ExitSuccess = 0
 $ExitGeneral = 1
+$ExitBadArgs = 2
 $ExitNoCommand = 3
 $ExitTimeout = 124
 
@@ -124,6 +126,32 @@ $Command
         return 1
     }
     return [int]$exitCode
+}
+
+function Invoke-ActionAndAck {
+    param([int]$CheckExitCode)
+
+    if (-not $ActionCommand) {
+        return
+    }
+
+    $env:LOOP_CHECK_EXIT_CODE = [string]$CheckExitCode
+
+    Write-LoopLog 'running action'
+    $actionExit = Invoke-LoopCommand -Command $ActionCommand
+    if ($actionExit -ne 0) {
+        Write-LoopError "action command failed with exit $actionExit"
+        exit $actionExit
+    }
+
+    if ($AckCommand) {
+        Write-LoopLog 'action succeeded; running ack'
+        $ackExit = Invoke-LoopCommand -Command $AckCommand
+        if ($ackExit -ne 0) {
+            Write-LoopError "ack command failed with exit $ackExit"
+            exit $ackExit
+        }
+    }
 }
 
 function Test-CodeInList {
@@ -221,6 +249,7 @@ function Show-DryRun {
     [ordered]@{
         check_command        = $CheckCommand
         action_command       = $ActionCommand
+        ack_command          = $AckCommand
         on_retry_command     = $OnRetryCommand
         interval_seconds     = $IntervalSeconds
         timeout_seconds      = $TimeoutSeconds
@@ -237,6 +266,11 @@ function Show-DryRun {
 }
 
 try {
+    if ($AckCommand -and -not $ActionCommand) {
+        Write-LoopError '-AckCommand requires -ActionCommand'
+        exit $ExitBadArgs
+    }
+
     Start-LoopTranscript
     Acquire-LoopLock
 
@@ -257,6 +291,7 @@ try {
             $remaining = [Math]::Max(0, $TimeoutSeconds - $elapsed)
         }
 
+        Remove-Item env:LOOP_CHECK_EXIT_CODE -ErrorAction SilentlyContinue
         $env:LOOP_ATTEMPT = [string]$attempt
         $env:LOOP_ELAPSED_SECONDS = [string]$elapsed
         $env:LOOP_REMAINING_SECONDS = [string]$remaining
@@ -268,24 +303,17 @@ try {
             if ($StableForSeconds -gt 0) {
                 Write-LoopLog "condition met; waiting ${StableForSeconds}s stability window"
                 Start-Sleep -Seconds $StableForSeconds
+                Remove-Item env:LOOP_CHECK_EXIT_CODE -ErrorAction SilentlyContinue
                 $stableExit = Invoke-LoopCommand -Command $CheckCommand
                 if (-not (Test-ConditionSucceeded -ExitCode $stableExit)) {
                     Write-LoopLog "condition did not remain stable; continuing"
                     $checkExit = $stableExit
                 } else {
-                    if ($ActionCommand) {
-                        Write-LoopLog 'condition met; running action'
-                        $actionExit = Invoke-LoopCommand -Command $ActionCommand
-                        exit $actionExit
-                    }
+                    Invoke-ActionAndAck -CheckExitCode $checkExit
                     exit $ExitSuccess
                 }
             } else {
-                if ($ActionCommand) {
-                    Write-LoopLog 'condition met; running action'
-                    $actionExit = Invoke-LoopCommand -Command $ActionCommand
-                    exit $actionExit
-                }
+                Invoke-ActionAndAck -CheckExitCode $checkExit
                 exit $ExitSuccess
             }
         }
@@ -294,6 +322,11 @@ try {
             if ($checkExit -eq 126 -or $checkExit -eq 127) {
                 Write-LoopError "check command failed with fatal exit $checkExit"
                 exit $ExitNoCommand
+            }
+            if ($ActionCommand -and (Test-CodeInList -Code $checkExit -List $StopExitCode)) {
+                Write-LoopLog "check returned actionable exit $checkExit"
+                Invoke-ActionAndAck -CheckExitCode $checkExit
+                exit $ExitSuccess
             }
             Write-LoopError "check stopped with non-retryable exit $checkExit"
             exit $checkExit
@@ -310,6 +343,7 @@ try {
         }
 
         if ($OnRetryCommand) {
+            $env:LOOP_CHECK_EXIT_CODE = [string]$checkExit
             Write-LoopLog 'running on-retry hook'
             $retryExit = Invoke-LoopCommand -Command $OnRetryCommand
             if ($retryExit -ne 0) {

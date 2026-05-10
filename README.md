@@ -32,7 +32,7 @@ Repeatedly run a check command or script on a configurable interval until a cond
 - Cross-platform runners for Bash (`scripts/loop.sh`) and PowerShell (`scripts/loop.ps1`)
 - Fixed interval, timeout, max tries, exponential backoff, jitter, and stability windows
 - Retry-vs-stop exit-code routing so the agent can fix actionable states and restart the loop
-- Optional success action, retry hook, singleton lock, quiet mode, and dry-run output
+- Optional success action, acknowledgement command, retry hook, singleton lock, quiet mode, and dry-run output
 - GitHub PR readiness helpers for approval, checks, merge conflicts, closed PRs, and merge race protection
 
 **Requirements:** Bash for macOS/Linux/Git Bash workflows or PowerShell 5.1+/7+. GitHub PR polling requires `gh`.
