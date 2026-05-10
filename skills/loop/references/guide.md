@@ -81,6 +81,13 @@ Use this pattern for persisted state that requires agent reasoning:
 2. **Agent acts** outside the runner: inspect details, reason about the response, edit code, validate, push, reply, or otherwise complete the work.
 3. **Ack** advances the marker only after the agent completes the response successfully.
 
+Before starting an agent-reasoned stateful loop, decide whether it is single-shot or watch-until-terminal:
+
+- **Single-shot**: handle one detected event, ack if needed, then continue with the next instruction or final response.
+- **Watch-until-terminal**: handle each detected event, ack if needed, then restart the loop until the terminal condition is reached.
+
+Use todos for agent-reasoned stateful loops when there may be substantial work between detection and acknowledgement. Track at least these steps: inspect the emitted event details, handle and validate the event, run the exact ack command, and either restart the loop or finish according to the chosen lifecycle. Simple stateless waits do not need this todo guardrail.
+
 Example:
 
 ```bash
@@ -92,7 +99,7 @@ scripts/loop.sh \
   --timeout 3600
 ```
 
-When the loop exits with `31`, the agent handles `event.json`. After successful handling:
+When the loop exits with `31`, the agent handles `event.json`. After successful handling, ack the marker:
 
 ```bash
 ./check-work.sh --marker marker.json --mode ack --event event.json
@@ -194,7 +201,8 @@ scripts/loop.sh --check 'test "$LOOP_ATTEMPT" -ge 3' --interval 1 --timeout 10
 - Quote inline commands for the shell that will execute them. Prefer helper scripts when quoting becomes hard to audit.
 - Do not advance persisted markers from a check that returns an actionable stop code.
 - If follow-up requires agent reasoning, leave action/ack out of the loop runner; stop, let the agent act, then run an explicit ack command.
+- For agent-reasoned stateful loops, use todos to track event handling, validation, the exact ack command, and whether to restart or finish afterward.
 - Use consuming checks only for automation-only work that the script completes atomically.
 - Always use a timeout or max tries for unattended loops.
-- Use stop exit codes for actionable states so the agent can fix and restart.
+- Use stop exit codes for actionable states so the agent can handle the work before deciding whether to restart or finish.
 - Use `--lock-name` / `-LockName` if duplicate loops would race.
