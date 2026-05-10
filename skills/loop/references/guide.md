@@ -63,16 +63,57 @@ Without an action command, stop codes keep their original behavior: the loop exi
 
 Check commands must be observational unless they fully handle the work themselves. A check that advances a cursor, marker, checkpoint, offset, queue lease, or "last seen" timestamp before the agent acts can lose work if the loop exits or the action fails.
 
-Use this pattern for persisted state:
+There are two safe patterns:
+
+| Pattern | Safe when | Example |
+|---|---|---|
+| Non-consuming check | The agent must reason and act dynamically afterward. | PR review feedback arrives, CI fails, merge conflict appears. |
+| Consuming check | The script itself fully completes the work atomically before marking it done. | A cleanup script deletes expired temp files and records completion. |
+
+For agent-reasoned workflows, do not hide the work inside the checker and do not advance the marker from the checker. The checker should only report that new work exists and preserve enough details for the agent to inspect.
+
+Use this pattern for persisted state that requires agent reasoning:
 
 1. **Peek/check** reads external state and compares it to a marker.
    - No new work: return the retry code, for example `10`.
    - New actionable work: write details to stdout or an artifact and return a stop/action code, for example `31`.
    - Do not advance the marker when returning an actionable code.
-2. **Act** handles the work.
-3. **Ack** advances the marker only after the action exits `0`.
+2. **Agent acts** outside the runner: inspect details, reason about the response, edit code, validate, push, reply, or otherwise complete the work.
+3. **Ack** advances the marker only after the agent completes the response successfully.
 
 Example:
+
+```bash
+scripts/loop.sh \
+  --check "./check-work.sh --marker marker.json --mode peek --out event.json" \
+  --retry-exit-codes 10 \
+  --stop-exit-codes 31 \
+  --interval 60 \
+  --timeout 3600
+```
+
+When the loop exits with `31`, the agent handles `event.json`. After successful handling:
+
+```bash
+./check-work.sh --marker marker.json --mode ack --event event.json
+```
+
+```powershell
+.\scripts\loop.ps1 `
+  -CheckCommand ".\check-work.ps1 -Marker marker.json -Mode Peek -Out event.json" `
+  -RetryExitCode 10 `
+  -StopExitCode 31 `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 3600
+```
+
+After successful handling:
+
+```powershell
+.\check-work.ps1 -Marker marker.json -Mode Ack -Event event.json
+```
+
+Use `--ack` / `-AckCommand` only when the action is automation-only and fully handles the work:
 
 ```bash
 scripts/loop.sh \
@@ -152,6 +193,8 @@ scripts/loop.sh --check 'test "$LOOP_ATTEMPT" -ge 3' --interval 1 --timeout 10
 - Do not run untrusted command strings.
 - Quote inline commands for the shell that will execute them. Prefer helper scripts when quoting becomes hard to audit.
 - Do not advance persisted markers from a check that returns an actionable stop code.
+- If follow-up requires agent reasoning, leave action/ack out of the loop runner; stop, let the agent act, then run an explicit ack command.
+- Use consuming checks only for automation-only work that the script completes atomically.
 - Always use a timeout or max tries for unattended loops.
 - Use stop exit codes for actionable states so the agent can fix and restart.
 - Use `--lock-name` / `-LockName` if duplicate loops would race.

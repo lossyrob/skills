@@ -30,6 +30,17 @@ Always:
 6. Quote command strings for the shell that will execute them. For complex logic, write a temporary script and pass that script as the check command.
 7. Stateful checks must be non-consuming: peek first, act next, and acknowledge only after the action succeeds.
 
+## Stateful check rule
+
+If follow-up work requires agent reasoning or dynamic action, the check must be non-consuming. It may emit an event ID, details, or an artifact path and then exit with a stop/action code, but it must not advance markers or mutate source state. Leave `--action` / `-ActionCommand` unset so the loop stops, then the agent can inspect details, edit code, validate, push, reply, or otherwise complete the response. After that succeeds, run an explicit ack command and restart the loop.
+
+Consuming checks are only safe for automation-only workflows where the check script itself fully handles the work atomically before marking it done. That is not appropriate for PR review response, CI repair, merge-conflict repair, or any workflow where the agent must reason about what happened.
+
+| Pattern | Safe when | Example |
+|---|---|---|
+| Non-consuming check | The agent must act dynamically afterward. | PR review arrives, CI fails, merge conflict appears. |
+| Consuming check | The script fully completes the work atomically without agent reasoning. | Delete expired temp files and mark cleanup complete. |
+
 ## Runner selection
 
 Use the runner that matches the active shell:
@@ -127,11 +138,12 @@ Action, ack, and on-retry commands additionally receive:
 2. Decide which exit codes mean "keep waiting" and which mean "agent must act".
 3. For stateful checks, design a peek -> act -> ack flow:
    - Peek/check reads state and reports new actionable work without advancing markers.
-   - Action handles that work.
-   - Ack advances the marker only after the action succeeds.
+   - If the agent must reason, the loop exits with a stop/action code and the agent handles the work outside the runner.
+   - If the work is automation-only, `ActionCommand` may handle it inside the runner.
+   - Ack advances the marker only after the agent or action succeeds.
 4. Run a dry run.
 5. Start the loop.
-6. If the loop exits with an actionable code and no action is configured, fix the issue and restart the loop.
+6. If the loop exits with an actionable code and no action is configured, handle the work, validate it, explicitly ack any stateful marker, and restart the loop.
 7. If the loop exits `0`, continue with the requested success action or final report.
 
 ## Examples
@@ -165,9 +177,43 @@ scripts/loop.sh \
   --max-tries 5
 ```
 
-### Peek, act, then ack stateful work
+### Agent-reasoned peek, act, then ack
 
-Use this pattern for cursors, markers, checkpoints, offsets, "last seen" timestamps, queue leases, and other persisted state. The check must not advance the marker when it finds actionable work.
+Use this pattern when the agent needs to inspect the event and take dynamic action, such as responding to PR review comments, fixing CI, or resolving merge conflicts. The check only reports that new work exists and preserves enough details for the agent.
+
+```bash
+scripts/loop.sh \
+  --check "./check-work.sh --marker marker.json --mode peek --out event.json" \
+  --retry-exit-codes 10 \
+  --stop-exit-codes 31 \
+  --interval 60 \
+  --timeout 3600
+```
+
+When the loop exits `31`, inspect `event.json`, complete the work, validate it, then explicitly acknowledge and restart:
+
+```bash
+./check-work.sh --marker marker.json --mode ack --event event.json
+```
+
+```powershell
+.\scripts\loop.ps1 `
+  -CheckCommand ".\check-work.ps1 -Marker marker.json -Mode Peek -Out event.json" `
+  -RetryExitCode 10 `
+  -StopExitCode 31 `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 3600
+```
+
+After handling succeeds:
+
+```powershell
+.\check-work.ps1 -Marker marker.json -Mode Ack -Event event.json
+```
+
+### Automation-only peek, action, then ack
+
+Use `--ack` / `-AckCommand` when the action is a deterministic command that fully handles the work without agent reasoning. The check must still not advance the marker when it finds actionable work.
 
 ```bash
 scripts/loop.sh \
