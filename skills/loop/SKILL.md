@@ -25,9 +25,32 @@ Always:
 1. Prefer a short, auditable check script over a long inline command.
 2. Run `--dry-run` first for non-trivial or destructive workflows.
 3. Use `--timeout` or `--max-tries` unless the user explicitly asks for an unbounded loop.
-4. Route actionable states through `--stop-exit-codes` so the agent can fix issues before restarting the loop.
-5. After every fix or update action, restart the loop rather than assuming the condition is still true.
+4. Route actionable states through `--stop-exit-codes` so the agent can fix issues before deciding whether to restart or finish.
+5. Decide whether the workflow is single-shot or watch-until-terminal before starting the loop.
 6. Quote command strings for the shell that will execute them. For complex logic, write a temporary script and pass that script as the check command.
+7. Stateful checks must be non-consuming: peek first, act next, and acknowledge only after the action succeeds.
+
+## Stateful check rule
+
+If follow-up work requires agent reasoning or dynamic action, the check must be non-consuming. It may emit an event ID, details, or an artifact path and then exit with a stop/action code, but it must not advance markers or mutate source state. Leave `--action` / `-ActionCommand` unset so the loop stops, then the agent can inspect details, edit code, validate, push, reply, or otherwise complete the response. After that succeeds, run an explicit ack command. Restart the loop only when the workflow is meant to keep watching.
+
+Consuming checks are only safe for automation-only workflows where the check script itself fully handles the work atomically before marking it done. That is not appropriate for PR review response, CI repair, merge-conflict repair, or any workflow where the agent must reason about what happened.
+
+| Pattern | Safe when | Example |
+|---|---|---|
+| Non-consuming check | The agent must act dynamically afterward. | PR review arrives, CI fails, merge conflict appears. |
+| Consuming check | The script fully completes the work atomically without agent reasoning. | Delete expired temp files and mark cleanup complete. |
+
+## Agent todo guardrail
+
+For agent-reasoned stateful loops, create todos before starting the loop or immediately after it exits with an actionable code. The todos should make the acknowledgement step explicit so it is not lost during a long repair or review-response flow:
+
+1. Inspect the emitted event details or artifact.
+2. Handle the event and complete any required validation, push, reply, or external update.
+3. Run the exact ack command that advances the marker.
+4. Restart the loop only for watch-until-terminal workflows; otherwise continue with the next instruction or final response.
+
+This guardrail is not required for simple stateless waits, such as polling a local service until it is healthy.
 
 ## Runner selection
 
@@ -47,6 +70,7 @@ scripts/loop.sh --check "<command>" \
   --interval 30 \
   --timeout 3600 \
   [--action "<command>"] \
+  [--ack "<command>"] \
   [--max-tries 20] \
   [--invert] \
   [--backoff-factor 2] \
@@ -67,6 +91,7 @@ scripts/loop.sh --check "<command>" \
   -IntervalSeconds 30 `
   -TimeoutSeconds 3600 `
   [-ActionCommand "<command>"] `
+  [-AckCommand "<command>"] `
   [-MaxTries 20] `
   [-Invert] `
   [-BackoffFactor 2] `
@@ -112,14 +137,27 @@ Every check, action, and on-retry command receives:
 | `LOOP_ELAPSED_SECONDS` | Elapsed wall-clock seconds since the loop started. |
 | `LOOP_REMAINING_SECONDS` | Seconds until timeout, or `0` for unbounded loops. |
 
+Action, ack, and on-retry commands additionally receive:
+
+| Variable | Meaning |
+|---|---|
+| `LOOP_CHECK_EXIT_CODE` | Check exit code that triggered the action, ack, or retry hook. |
+
 ## Standard workflow
 
 1. Identify the condition that should be checked.
-2. Decide which exit codes mean "keep waiting" and which mean "agent must act".
-3. Run a dry run.
-4. Start the loop.
-5. If the loop exits with an actionable code, fix the issue and restart the loop.
-6. If the loop exits `0`, continue with the requested success action or final report.
+2. Decide whether this is a single-shot loop or a watch-until-terminal loop.
+3. Decide which exit codes mean "keep waiting" and which mean "agent must act".
+4. For stateful checks, design a peek -> act -> ack flow:
+   - Peek/check reads state and reports new actionable work without advancing markers.
+   - If the agent must reason, the loop exits with a stop/action code and the agent handles the work outside the runner.
+   - If the work is automation-only, `ActionCommand` may handle it inside the runner.
+   - Ack advances the marker only after the agent or action succeeds.
+5. For agent-reasoned stateful checks, create todos that include the exact ack command and whether to restart or finish after ack.
+6. Run a dry run.
+7. Start the loop.
+8. If the loop exits with an actionable code and no action is configured, handle the work, validate it, explicitly ack any stateful marker, then restart only if this is a watch-until-terminal loop.
+9. If the loop exits `0`, continue with the requested success action or final report.
 
 ## Examples
 
@@ -151,6 +189,68 @@ scripts/loop.sh \
   --max-interval 60 \
   --max-tries 5
 ```
+
+### Agent-reasoned peek, act, then ack
+
+Use this pattern when the agent needs to inspect the event and take dynamic action, such as responding to PR review comments, fixing CI, or resolving merge conflicts. The check only reports that new work exists and preserves enough details for the agent.
+
+```bash
+scripts/loop.sh \
+  --check "./check-work.sh --marker marker.json --mode peek --out event.json" \
+  --retry-exit-codes 10 \
+  --stop-exit-codes 31 \
+  --interval 60 \
+  --timeout 3600
+```
+
+When the loop exits `31`, inspect `event.json`, complete the work, validate it, then explicitly acknowledge. Restart only if the loop is intended to keep watching:
+
+```bash
+./check-work.sh --marker marker.json --mode ack --event event.json
+```
+
+```powershell
+.\scripts\loop.ps1 `
+  -CheckCommand ".\check-work.ps1 -Marker marker.json -Mode Peek -Out event.json" `
+  -RetryExitCode 10 `
+  -StopExitCode 31 `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 3600
+```
+
+After handling succeeds:
+
+```powershell
+.\check-work.ps1 -Marker marker.json -Mode Ack -Event event.json
+```
+
+### Automation-only peek, action, then ack
+
+Use `--ack` / `-AckCommand` when the action is a deterministic command that fully handles the work without agent reasoning. The check must still not advance the marker when it finds actionable work.
+
+```bash
+scripts/loop.sh \
+  --check "./check-work.sh --marker marker.json --mode peek" \
+  --retry-exit-codes 10 \
+  --stop-exit-codes 31 \
+  --action "./handle-work.sh" \
+  --ack "./check-work.sh --marker marker.json --mode ack" \
+  --interval 60 \
+  --timeout 3600
+```
+
+```powershell
+.\scripts\loop.ps1 `
+  -CheckCommand ".\check-work.ps1 -Marker marker.json -Mode Peek" `
+  -RetryExitCode 10 `
+  -StopExitCode 31 `
+  -ActionCommand ".\handle-work.ps1" `
+  -AckCommand ".\check-work.ps1 -Marker marker.json -Mode Ack" `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 3600
+```
+
+If the action fails, ack does not run and the marker remains unchanged. If ack fails, the loop exits non-zero so the same work can be detected again after the ack problem is fixed.
 
 ### Watch a PR until it can be merged
 
