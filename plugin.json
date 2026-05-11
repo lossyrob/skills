@@ -1,11 +1,11 @@
 {
   "name": "lossyrob-skills",
   "description": "Reusable Copilot CLI skills by lossyrob",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": {
     "name": "Rob Emanuele"
   },
   "license": "MIT",
-  "keywords": ["copilot", "skills", "session", "odt", "loop", "wait", "poll"],
+  "keywords": ["copilot", "skills", "session", "odt", "loop", "wait", "poll", "terminal", "windows", "launch"],
   "skills": "skills/"
 }

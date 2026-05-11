@@ -22,6 +22,20 @@ copilot plugin install lossyrob-skills@lossyrob-skills
 
 ## Skills
 
+### launch-copilot-terminal
+
+Launch a new Windows Terminal window running Copilot CLI with a requested title, tab color, working directory, and seeded interactive prompt. Useful for starting parallel Copilot sessions or focused worker windows from an existing session.
+
+**Trigger phrases:** "launch Copilot terminal", "open Copilot window", "start Copilot session", "spawn Copilot worker"
+
+**Features:**
+- Opens a separate Windows Terminal window with a chosen title and tab color
+- Starts Copilot CLI interactively with `copilot -i <prompt>`
+- Supports explicit working directories, extra Copilot CLI arguments, and prompt files
+- Includes dry-run output for inspecting the generated launch command
+
+**Requirements:** Windows, Windows Terminal (`wt.exe`), PowerShell 5.1+/7+, and Copilot CLI on `PATH`.
+
 ### loop
 
 Repeatedly run a check command or script on a configurable interval until a condition is met, a timeout is reached, or an actionable exit code is returned. Useful for waiting on services, polling PR status, retrying commands, and watching CI/review/mergeability gates before continuing.
