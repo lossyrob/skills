@@ -1,6 +1,7 @@
 ---
 name: session-branch
 description: Branch the current session, creating a new session that inherits conversation history up to the current point while preserving the original session intact. This skill should be used when the user wants to create a new session branch for experimentation or parallel development without affecting the original session.
+compatibility: "Requires Python 3. Includes Bash instructions for macOS/Linux/Git Bash and PowerShell instructions for Windows."
 ---
 # Session Branch Skill
 
@@ -15,7 +16,7 @@ Use this skill when the user says:
 
 ## Instructions
 
-When invoked, perform the following steps. Execute steps 1-6 in a single bash script for reliability.
+When invoked, perform the following steps. Use PowerShell on Windows and Bash on macOS/Linux. Keep the branch operation in a single script for the selected shell so session copying, metadata rewrite, and cleanup happen together.
 
 ### 1. Identify Current Session
 
@@ -23,7 +24,9 @@ The current session ID is in `<session_context>` → session folder path.
 
 ### 2. Run Branch Script
 
-Run the following as a single bash script, substituting `CURRENT_SESSION_ID` with the actual value:
+Run the script for the current shell, substituting `CURRENT_SESSION_ID` with the actual value.
+
+#### Bash
 
 ```bash
 set -euo pipefail
@@ -179,22 +182,203 @@ checkpoint_dir.mkdir(exist_ok=True)
 
 print(f"NEW_SESSION_ID={new_session_id}")
 print(f"NEW_SESSION_NAME={branch_title}")
+print(f"NEW_SESSION_PATH={new_session}")
 PY
 ```
 
-Use the printed `NEW_SESSION_ID` and `NEW_SESSION_NAME` values in the success
-message.
+#### PowerShell
+
+```powershell
+$ErrorActionPreference = "Stop"
+
+$CURRENT_SESSION_ID = "<current-session-id>"
+$STATE_DIR = Join-Path $HOME ".copilot\session-state"
+$CURRENT_SESSION = Join-Path $STATE_DIR $CURRENT_SESSION_ID
+$NEW_SESSION_ID = [guid]::NewGuid().ToString()
+$NEW_SESSION = Join-Path $STATE_DIR $NEW_SESSION_ID
+
+$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+if (-not $pythonCommand) {
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+}
+if (-not $pythonCommand) {
+    throw "Python 3 is required to branch a session."
+}
+$PYTHON_BIN = $pythonCommand.Source
+
+$branchScript = @'
+import datetime as dt
+import json
+import shutil
+import sys
+from pathlib import Path
+
+current_session = Path(sys.argv[1])
+new_session = Path(sys.argv[2])
+current_session_id = sys.argv[3]
+new_session_id = sys.argv[4]
+
+workspace_path = current_session / "workspace.yaml"
+if not workspace_path.exists():
+    raise SystemExit(f"Missing workspace metadata: {workspace_path}")
+if new_session.exists():
+    raise SystemExit(f"Branch destination already exists: {new_session}")
+
+
+def parse_scalar(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value[1:-1]
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def read_top_level_fields(path):
+    fields = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith(" ") and ":" in line:
+            key, value = line.split(":", 1)
+            fields[key] = parse_scalar(value)
+    return fields
+
+
+def yaml_string(value):
+    return json.dumps(value, ensure_ascii=True)
+
+
+def compact(value, max_len=72):
+    value = " ".join((value or "").split())
+    if len(value) <= max_len:
+        return value
+    return value[: max_len - 3].rstrip() + "..."
+
+
+def set_top_level(lines, key, value):
+    prefix = f"{key}:"
+    for index, line in enumerate(lines):
+        if line.startswith(prefix):
+            lines[index] = f"{key}: {value}"
+            return
+    lines.append(f"{key}: {value}")
+
+
+current_fields = read_top_level_fields(workspace_path)
+base_title = (
+    current_fields.get("name")
+    or current_fields.get("summary")
+    or f"Session {current_session_id[:8]}"
+)
+branch_title = f"Branch: {compact(base_title)} [{new_session_id[:8]}]"
+now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+shutil.copytree(current_session, new_session)
+
+new_workspace_path = new_session / "workspace.yaml"
+workspace_lines = new_workspace_path.read_text(encoding="utf-8").splitlines()
+set_top_level(workspace_lines, "id", new_session_id)
+set_top_level(workspace_lines, "name", yaml_string(branch_title))
+set_top_level(workspace_lines, "user_named", "true")
+set_top_level(workspace_lines, "summary", yaml_string(branch_title))
+set_top_level(workspace_lines, "created_at", now)
+set_top_level(workspace_lines, "updated_at", now)
+set_top_level(workspace_lines, "branch_of", current_session_id)
+set_top_level(
+    workspace_lines,
+    "branch_note",
+    yaml_string(f"Branched from: {base_title} ({current_session_id})"),
+)
+new_workspace_path.write_text("\n".join(workspace_lines) + "\n", encoding="utf-8")
+
+events_path = new_session / "events.jsonl"
+if events_path.exists():
+    rewritten_events = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if event.get("type") == "session.start":
+            data = event.setdefault("data", {})
+            data["sessionId"] = new_session_id
+            if "alreadyInUse" in data:
+                data["alreadyInUse"] = False
+            for key in ("name", "title", "summary"):
+                if key in data:
+                    data[key] = branch_title
+        rewritten_events.append(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
+    events_path.write_text("\n".join(rewritten_events) + "\n", encoding="utf-8")
+
+rewind_dir = new_session / "rewind-snapshots"
+rewind_dir.mkdir(exist_ok=True)
+(rewind_dir / "index.json").write_text(
+    '{"version":1,"snapshots":[],"filePathMap":{}}\n',
+    encoding="utf-8",
+)
+backup_dir = rewind_dir / "backups"
+if backup_dir.exists():
+    for child in backup_dir.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+for path in [new_session / "session.db", *new_session.glob("inuse.*.lock")]:
+    if path.exists():
+        path.unlink()
+
+checkpoint_dir = new_session / "checkpoints"
+checkpoint_dir.mkdir(exist_ok=True)
+(checkpoint_dir / "index.md").write_text(
+    "# Checkpoint History\n\n"
+    "Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.\n\n"
+    "| # | Title | File |\n"
+    "|---|-------|------|\n",
+    encoding="utf-8",
+)
+
+print(f"NEW_SESSION_ID={new_session_id}")
+print(f"NEW_SESSION_NAME={branch_title}")
+print(f"NEW_SESSION_PATH={new_session}")
+'@
+
+$branchScript | & $PYTHON_BIN - $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
+```
+
+Use the printed `NEW_SESSION_ID`, `NEW_SESSION_NAME`, and `NEW_SESSION_PATH` values in the success message.
 
 ### 3. Report Success
 
 Tell the user the **exact commands** to drop into the new session. Include the `cd` to the working directory.
 
-**Detect CLI flags**: Before reporting, detect what flags the current session was launched with:
+**Detect CLI flags**: Before reporting, detect what flags the current session was launched with. If flag detection fails, omit the flags.
+
+#### Bash
+
 ```bash
-COPILOT_FLAGS=$(cat /proc/$PPID/cmdline 2>/dev/null | tr '\0' ' ' | grep -oP '(--yolo|--alt-screen|--model \S+)' | tr '\n' ' ' || echo "")
+COPILOT_FLAGS=$(cat /proc/$PPID/cmdline 2>/dev/null | tr '\0' ' ' | grep -Eo '(--yolo|--allow-all|--alt-screen|--model [^ ]+)' | tr '\n' ' ' || echo "")
 ```
 
-Include those flags in the resume command:
+#### PowerShell
+
+```powershell
+$COPILOT_FLAGS = ""
+try {
+    $currentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue
+    if ($currentProcess -and $currentProcess.ParentProcessId) {
+        $parentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($currentProcess.ParentProcessId)" -ErrorAction SilentlyContinue
+        $parentCommand = if ($parentProcess) { $parentProcess.CommandLine } else { "" }
+        $flags = [regex]::Matches($parentCommand, '(--yolo|--allow-all|--alt-screen|--model\s+\S+)') | ForEach-Object { $_.Value }
+        if ($flags) { $COPILOT_FLAGS = ($flags -join ' ') }
+    }
+} catch {
+    $COPILOT_FLAGS = ""
+}
+```
+
+Include those flags in the resume command. Use a shell-appropriate command separator: `&&` in Bash or PowerShell 7+, and `;` in Windows PowerShell 5.1.
 
 ```
 ✅ Session branched successfully!
@@ -202,20 +386,24 @@ Include those flags in the resume command:
 To start working in the new session:
 
     cd <cwd> && copilot --resume="<new-session-name>" <detected-flags>
+    cd <cwd>; copilot --resume="<new-session-name>" <detected-flags>   # Windows PowerShell 5.1
 
 To return to this session later:
 
     cd <original-cwd> && copilot --resume=<current-session-name-or-id> <detected-flags>
+    cd <original-cwd>; copilot --resume=<current-session-name-or-id> <detected-flags>   # Windows PowerShell 5.1
 
 If name matching is ambiguous for any reason, resume by ID:
 
     cd <cwd> && copilot --resume=<new-session-id> <detected-flags>
+    cd <cwd>; copilot --resume=<new-session-id> <detected-flags>   # Windows PowerShell 5.1
 ```
 
 If a worktree was created, the `cd` should point to the worktree directory instead:
 
 ```
     cd <worktree-dir> && copilot --resume="<new-session-name>" <detected-flags>
+    cd <worktree-dir>; copilot --resume="<new-session-name>" <detected-flags>   # Windows PowerShell 5.1
 ```
 
 **Important:** Copilot CLI now uses the `name` field in `workspace.yaml` for
@@ -231,9 +419,21 @@ grep -l 'branch_of' ~/.copilot/session-state/*/workspace.yaml | while read f; do
 done
 ```
 
+```powershell
+Get-ChildItem (Join-Path $HOME ".copilot\session-state\*\workspace.yaml") | ForEach-Object {
+    $content = Get-Content -LiteralPath $_.FullName -Raw
+    if ($content -match 'branch_of') {
+        Write-Output "---"
+        Write-Output $content
+    }
+}
+```
+
 ### 4. Truncation (Only If Requested)
 
 If user says "branch from N turns ago", truncate events.jsonl to remove the last N turns:
+
+#### Bash
 
 ```bash
 "$PYTHON_BIN" -c "
@@ -260,6 +460,36 @@ print(f'Truncated to {len(events)} events (removed last {turns_back} turns)')
 " N
 ```
 
+#### PowerShell
+
+```powershell
+$truncateScript = @'
+import json
+import sys
+from pathlib import Path
+
+turns_back = int(sys.argv[1])
+session_dir = Path(sys.argv[2])
+events_file = session_dir / "events.jsonl"
+
+events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+user_msgs = [(index, event) for index, event in enumerate(events) if event.get("type") == "user.message"]
+if turns_back >= len(user_msgs):
+    print(f"Error: only {len(user_msgs)} turns exist")
+    sys.exit(1)
+
+cut_idx = user_msgs[-turns_back][0]
+events = events[:cut_idx]
+events_file.write_text(
+    "".join(json.dumps(event, separators=(",", ":")) + "\n" for event in events),
+    encoding="utf-8",
+)
+print(f"Truncated to {len(events)} events (removed last {turns_back} turns)")
+'@
+
+$truncateScript | & $PYTHON_BIN - N $NEW_SESSION
+```
+
 ## Notes
 
 - Both sessions are fully independent after branching
@@ -275,6 +505,8 @@ print(f'Truncated to {len(events)} events (removed last {turns_back} turns)')
 ## Worktree Branching (Optional)
 
 If the user says "branch into a worktree" or "branch with worktree for X", also create a git worktree so the new session works in an isolated directory:
+
+#### Bash
 
 ```bash
 BRANCH_NAME="donna/$FEATURE_SLUG"
@@ -299,4 +531,33 @@ Branch: donna/<feature>
 
 To start working:
     cd ~/proj/pal-trees/<feature> && copilot --resume=<new-session-id>
+```
+
+#### PowerShell
+
+```powershell
+$BRANCH_NAME = "donna/$FEATURE_SLUG"
+$WORKTREE_DIR = Join-Path $HOME "proj\pal-trees\$FEATURE_SLUG"
+
+git worktree add $WORKTREE_DIR -b $BRANCH_NAME
+
+Push-Location (Join-Path $WORKTREE_DIR "donna")
+npm install
+Pop-Location
+
+$workspacePath = Join-Path $NEW_SESSION "workspace.yaml"
+$yaml = Get-Content -LiteralPath $workspacePath -Raw
+$yaml = $yaml -replace '(?m)^cwd: .*', "cwd: $WORKTREE_DIR"
+Set-Content -LiteralPath $workspacePath -Value $yaml -NoNewline
+```
+
+Then tell the user:
+```powershell
+✅ Session branched with worktree!
+
+Worktree: ~\proj\pal-trees\<feature>
+Branch: donna/<feature>
+
+To start working:
+    cd ~\proj\pal-trees\<feature>; copilot --resume=<new-session-id>
 ```
