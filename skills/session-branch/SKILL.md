@@ -14,6 +14,8 @@ Use this skill when the user says:
 - "create a branch from here"
 - "save this point and branch"
 
+If the branch request also includes "launch in terminal", "open in terminal", "in a new tab", or similar, follow the [Launch in Terminal (Optional)](#launch-in-terminal-optional) flow instead of the default success report. This Windows-only mode opens the branched session in a new Windows Terminal tab inside the current window using the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper.
+
 ## Instructions
 
 When invoked, perform the following steps. Use PowerShell on Windows and Bash on macOS/Linux. Keep the branch operation in a single script for the selected shell so session copying, metadata rewrite, and cleanup happen together.
@@ -349,6 +351,21 @@ $branchScript | & $PYTHON_BIN - $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_I
 
 Use the printed `NEW_SESSION_ID`, `NEW_SESSION_NAME`, and `NEW_SESSION_PATH` values in the success message.
 
+When invoking PowerShell from the agent, capture the printed values into variables for use in later steps. For example, run the branch script and parse its `key=value` output:
+
+```powershell
+$branchOutput = $branchScript | & $PYTHON_BIN - $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
+$branchValues = @{}
+foreach ($line in $branchOutput) {
+    if ($line -match '^([A-Z_]+)=(.*)$') {
+        $branchValues[$Matches[1]] = $Matches[2]
+    }
+}
+$NEW_SESSION_NAME = $branchValues['NEW_SESSION_NAME']
+$NEW_SESSION_PATH = $branchValues['NEW_SESSION_PATH']
+# $NEW_SESSION_ID was generated locally above; keep using that variable.
+```
+
 ### 3. Report Success
 
 Tell the user the **exact commands** to drop into the new session. Include the `cd` to the working directory.
@@ -429,7 +446,123 @@ Get-ChildItem (Join-Path $HOME ".copilot\session-state\*\workspace.yaml") | ForE
 }
 ```
 
-### 4. Truncation (Only If Requested)
+### 4. Launch in Terminal (Optional)
+
+Only run this step if the user explicitly asked to launch the branched session in a terminal (e.g., "branch and launch in terminal", "launch in terminal", "open in a new tab"). When this mode is requested, **replace** the standard "Report Success" output with a minimal launch announcement (no resume commands, no branch listing snippets, no worktree resume hints).
+
+**Platform**: Windows-only. It depends on Windows Terminal (`wt.exe`) and the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper. If the user is on Bash/macOS/Linux, do **not** attempt the launch — fall back to the standard "Report Success" output and tell the user that launch-in-terminal is currently Windows-only.
+
+**Ordering**: If the user also asked to truncate (e.g., "branch from N turns ago and launch in terminal"), perform Step 5 (Truncation) **before** running this step, so the resumed session loads the truncated state.
+
+#### Step 4a — Locate the launch-copilot-terminal helper
+
+The plugin install location varies between hosts. Try the following in order, take the first existing path:
+
+```powershell
+$LAUNCH_SCRIPT_PATH = $null
+$candidatePaths = @(
+    # Sibling skill in the same checked-out repo as session-branch
+    (Join-Path (Split-Path -Parent $PSScriptRoot) "launch-copilot-terminal\Launch-CopilotTerminal.ps1"),
+    # Default plugin install path
+    (Join-Path $HOME ".copilot\skills\launch-copilot-terminal\Launch-CopilotTerminal.ps1")
+)
+foreach ($candidate in $candidatePaths) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        $LAUNCH_SCRIPT_PATH = (Resolve-Path -LiteralPath $candidate).ProviderPath
+        break
+    }
+}
+if (-not $LAUNCH_SCRIPT_PATH) {
+    $found = Get-ChildItem -Path (Join-Path $HOME ".copilot") -Recurse -Filter "Launch-CopilotTerminal.ps1" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($found) { $LAUNCH_SCRIPT_PATH = $found.FullName }
+}
+```
+
+If `$LAUNCH_SCRIPT_PATH` is still `$null`, fall back to the standard "Report Success" output and tell the user the launch helper was not available.
+
+#### Step 4b — Detect CLI flags
+
+Detect the same way Step 3 does. The launch helper preserves these on the resumed session.
+
+```powershell
+$COPILOT_FLAGS = ""
+try {
+    $currentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue
+    if ($currentProcess -and $currentProcess.ParentProcessId) {
+        $parentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($currentProcess.ParentProcessId)" -ErrorAction SilentlyContinue
+        $parentCommand = if ($parentProcess) { $parentProcess.CommandLine } else { "" }
+        $flags = [regex]::Matches($parentCommand, '(--yolo|--allow-all|--alt-screen|--model\s+\S+)') | ForEach-Object { $_.Value }
+        if ($flags) { $COPILOT_FLAGS = ($flags -join ' ') }
+    }
+} catch {
+    $COPILOT_FLAGS = ""
+}
+
+$COPILOT_FLAGS_ARRAY = @()
+if (-not [string]::IsNullOrWhiteSpace($COPILOT_FLAGS)) {
+    $COPILOT_FLAGS_ARRAY = $COPILOT_FLAGS.Trim() -split '\s+'
+}
+```
+
+#### Step 4c — Resolve title, color, and cwd
+
+- **Title**: use `$NEW_SESSION_NAME` from Step 2 (it already contains the new ID prefix and is safe as both a `wt` tab title and a Copilot resume target).
+- **Color**: default `purple` to make branched sessions visually distinct. If the user requested a specific color (e.g., "launch in terminal in green"), use that instead.
+- **Cwd**: if a worktree was created (see "Worktree Branching" below), use that worktree directory. Otherwise read `cwd:` from the original session's `workspace.yaml`:
+
+```powershell
+$LAUNCH_COLOR = "purple"   # override if the user requested a specific color
+$LAUNCH_CWD   = $null
+if ($WORKTREE_DIR -and (Test-Path -LiteralPath $WORKTREE_DIR -PathType Container)) {
+    $LAUNCH_CWD = (Resolve-Path -LiteralPath $WORKTREE_DIR).ProviderPath
+} else {
+    $workspacePath = Join-Path $CURRENT_SESSION "workspace.yaml"
+    foreach ($line in Get-Content -LiteralPath $workspacePath -Encoding UTF8) {
+        if ($line -match '^cwd:\s*(.*)$') {
+            $LAUNCH_CWD = $Matches[1].Trim().Trim('"').Trim("'")
+            break
+        }
+    }
+}
+if (-not $LAUNCH_CWD -or -not (Test-Path -LiteralPath $LAUNCH_CWD -PathType Container)) {
+    $LAUNCH_CWD = (Get-Location).ProviderPath
+}
+```
+
+#### Step 4d — Launch
+
+```powershell
+try {
+    & $LAUNCH_SCRIPT_PATH `
+        -Title $NEW_SESSION_NAME `
+        -Color $LAUNCH_COLOR `
+        -Cwd $LAUNCH_CWD `
+        -Resume $NEW_SESSION_ID `
+        -Window current `
+        -CopilotArgs $COPILOT_FLAGS_ARRAY
+} catch {
+    # Launch helper failed (e.g., wt.exe missing, invalid cwd, wt.exe non-zero exit).
+    # Fall back to the standard Step 3 output and surface the failure reason.
+    Write-Warning "Launch helper failed: $($_.Exception.Message). Falling back to resume instructions."
+    # Then emit the standard Report Success block from Step 3.
+    return
+}
+```
+
+Resume by `$NEW_SESSION_ID` (not name) to avoid any chance of name collision. `-Window current` maps to `wt -w 0`, which opens the new tab in the most-recently-used Windows Terminal window — i.e., next to the current Copilot session.
+
+#### Step 4e — Minimal success report (replaces Step 3 output)
+
+When the launch succeeds, the only message back to the user should be the new session ID and a confirmation that the terminal is being launched:
+
+```
+✅ Branched session: <NEW_SESSION_ID>
+🚀 Launching it in a new Windows Terminal tab in this window...
+```
+
+Do not echo the resume commands, branch listing instructions, or worktree resume hints in this mode.
+
+### 5. Truncation (Only If Requested)
 
 If user says "branch from N turns ago", truncate events.jsonl to remove the last N turns:
 
