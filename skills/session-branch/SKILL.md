@@ -16,9 +16,21 @@ Use this skill when the user says:
 
 If the branch request also includes "launch in terminal", "open in terminal", "in a new tab", or similar, follow the [Launch in Terminal (Optional)](#launch-in-terminal-optional) flow instead of the default success report. This Windows-only mode opens the branched session in a new Windows Terminal tab inside the current window using the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper.
 
+## Bundled scripts
+
+This skill ships with helper scripts in `scripts/` next to this `SKILL.md`. They are the canonical implementation of the heavy lifting; the snippets below just orchestrate them.
+
+| Script | Purpose |
+|---|---|
+| `scripts/branch_session.py` | Copy a session, rewrite metadata, and reset rewind/checkpoints. |
+| `scripts/truncate_session.py` | Drop the last N user turns from the branched session's `events.jsonl`. |
+| `scripts/Launch-BranchedSession.ps1` | (Windows-only) Open the branched session in a new Windows Terminal tab inside the current window via the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper. |
+
+Resolve the skill directory however your environment exposes it (e.g. the directory containing this `SKILL.md`). Examples below use `$SKILL_DIR` (Bash) or `$PSScriptRoot` after dot-sourcing / `Split-Path` of the SKILL.md path; substitute your actual lookup.
+
 ## Instructions
 
-When invoked, perform the following steps. Use PowerShell on Windows and Bash on macOS/Linux. Keep the branch operation in a single script for the selected shell so session copying, metadata rewrite, and cleanup happen together.
+When invoked, perform the following steps. Use PowerShell on Windows and Bash on macOS/Linux.
 
 ### 1. Identify Current Session
 
@@ -26,7 +38,7 @@ The current session ID is in `<session_context>` → session folder path.
 
 ### 2. Run Branch Script
 
-Run the script for the current shell, substituting `CURRENT_SESSION_ID` with the actual value.
+Generate a new session ID, then invoke `scripts/branch_session.py` to copy the session and rewrite metadata. Capture the printed `NEW_SESSION_ID`, `NEW_SESSION_NAME`, and `NEW_SESSION_PATH` for use in later steps.
 
 #### Bash
 
@@ -44,149 +56,12 @@ fi
 NEW_SESSION_ID=$("$PYTHON_BIN" -c 'import uuid; print(uuid.uuid4())')
 NEW_SESSION="$STATE_DIR/$NEW_SESSION_ID"
 
-"$PYTHON_BIN" - "$CURRENT_SESSION" "$NEW_SESSION" "$CURRENT_SESSION_ID" "$NEW_SESSION_ID" <<'PY'
-import datetime as dt
-import json
-import shutil
-import sys
-from pathlib import Path
-
-current_session = Path(sys.argv[1])
-new_session = Path(sys.argv[2])
-current_session_id = sys.argv[3]
-new_session_id = sys.argv[4]
-
-workspace_path = current_session / "workspace.yaml"
-if not workspace_path.exists():
-    raise SystemExit(f"Missing workspace metadata: {workspace_path}")
-if new_session.exists():
-    raise SystemExit(f"Branch destination already exists: {new_session}")
-
-
-def parse_scalar(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value[1:-1]
-    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
-        return value[1:-1].replace("''", "'")
-    return value
-
-
-def read_top_level_fields(path):
-    fields = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith(" ") and ":" in line:
-            key, value = line.split(":", 1)
-            fields[key] = parse_scalar(value)
-    return fields
-
-
-def yaml_string(value):
-    return json.dumps(value, ensure_ascii=True)
-
-
-def compact(value, max_len=72):
-    value = " ".join((value or "").split())
-    if len(value) <= max_len:
-        return value
-    return value[: max_len - 3].rstrip() + "..."
-
-
-def set_top_level(lines, key, value):
-    prefix = f"{key}:"
-    for index, line in enumerate(lines):
-        if line.startswith(prefix):
-            lines[index] = f"{key}: {value}"
-            return
-    lines.append(f"{key}: {value}")
-
-
-current_fields = read_top_level_fields(workspace_path)
-base_title = (
-    current_fields.get("name")
-    or current_fields.get("summary")
-    or f"Session {current_session_id[:8]}"
-)
-branch_title = f"Branch: {compact(base_title)} [{new_session_id[:8]}]"
-now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-# Copy the session, then rewrite identity and title metadata in the branch.
-shutil.copytree(current_session, new_session)
-
-new_workspace_path = new_session / "workspace.yaml"
-workspace_lines = new_workspace_path.read_text(encoding="utf-8").splitlines()
-set_top_level(workspace_lines, "id", new_session_id)
-set_top_level(workspace_lines, "name", yaml_string(branch_title))
-set_top_level(workspace_lines, "user_named", "true")
-set_top_level(workspace_lines, "summary", yaml_string(branch_title))
-set_top_level(workspace_lines, "created_at", now)
-set_top_level(workspace_lines, "updated_at", now)
-set_top_level(workspace_lines, "branch_of", current_session_id)
-set_top_level(
-    workspace_lines,
-    "branch_note",
-    yaml_string(f"Branched from: {base_title} ({current_session_id})"),
-)
-new_workspace_path.write_text("\n".join(workspace_lines) + "\n", encoding="utf-8")
-
-# Fix session.start event metadata to reference the new session ID.
-events_path = new_session / "events.jsonl"
-if events_path.exists():
-    rewritten_events = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        event = json.loads(line)
-        if event.get("type") == "session.start":
-            data = event.setdefault("data", {})
-            data["sessionId"] = new_session_id
-            if "alreadyInUse" in data:
-                data["alreadyInUse"] = False
-            for key in ("name", "title", "summary"):
-                if key in data:
-                    data[key] = branch_title
-        rewritten_events.append(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
-    events_path.write_text("\n".join(rewritten_events) + "\n", encoding="utf-8")
-
-# Reset rewind snapshots (they reference old event state).
-rewind_dir = new_session / "rewind-snapshots"
-rewind_dir.mkdir(exist_ok=True)
-(rewind_dir / "index.json").write_text(
-    '{"version":1,"snapshots":[],"filePathMap":{}}\n',
-    encoding="utf-8",
-)
-backup_dir = rewind_dir / "backups"
-if backup_dir.exists():
-    for child in backup_dir.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-# Reset per-session database and stale in-use locks.
-for path in [new_session / "session.db", *new_session.glob("inuse.*.lock")]:
-    if path.exists():
-        path.unlink()
-
-# Reset checkpoints.
-checkpoint_dir = new_session / "checkpoints"
-checkpoint_dir.mkdir(exist_ok=True)
-(checkpoint_dir / "index.md").write_text(
-    "# Checkpoint History\n\n"
-    "Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.\n\n"
-    "| # | Title | File |\n"
-    "|---|-------|------|\n",
-    encoding="utf-8",
-)
-
-print(f"NEW_SESSION_ID={new_session_id}")
-print(f"NEW_SESSION_NAME={branch_title}")
-print(f"NEW_SESSION_PATH={new_session}")
-PY
+# $SKILL_DIR is the directory containing this SKILL.md.
+"$PYTHON_BIN" "$SKILL_DIR/scripts/branch_session.py" \
+  "$CURRENT_SESSION" "$NEW_SESSION" "$CURRENT_SESSION_ID" "$NEW_SESSION_ID"
 ```
+
+The script prints three `KEY=value` lines (`NEW_SESSION_ID`, `NEW_SESSION_NAME`, `NEW_SESSION_PATH`) on stdout. Capture them with a small loop or `eval` if you need them as shell variables.
 
 #### PowerShell
 
@@ -200,161 +75,14 @@ $NEW_SESSION_ID = [guid]::NewGuid().ToString()
 $NEW_SESSION = Join-Path $STATE_DIR $NEW_SESSION_ID
 
 $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $pythonCommand) {
-    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-}
-if (-not $pythonCommand) {
-    throw "Python 3 is required to branch a session."
-}
+if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
+if (-not $pythonCommand) { throw "Python 3 is required to branch a session." }
 $PYTHON_BIN = $pythonCommand.Source
 
-$branchScript = @'
-import datetime as dt
-import json
-import shutil
-import sys
-from pathlib import Path
+# $SKILL_DIR is the directory containing this SKILL.md.
+$branchOutput = & $PYTHON_BIN (Join-Path $SKILL_DIR "scripts\branch_session.py") `
+    $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
 
-current_session = Path(sys.argv[1])
-new_session = Path(sys.argv[2])
-current_session_id = sys.argv[3]
-new_session_id = sys.argv[4]
-
-workspace_path = current_session / "workspace.yaml"
-if not workspace_path.exists():
-    raise SystemExit(f"Missing workspace metadata: {workspace_path}")
-if new_session.exists():
-    raise SystemExit(f"Branch destination already exists: {new_session}")
-
-
-def parse_scalar(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value[1:-1]
-    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
-        return value[1:-1].replace("''", "'")
-    return value
-
-
-def read_top_level_fields(path):
-    fields = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith(" ") and ":" in line:
-            key, value = line.split(":", 1)
-            fields[key] = parse_scalar(value)
-    return fields
-
-
-def yaml_string(value):
-    return json.dumps(value, ensure_ascii=True)
-
-
-def compact(value, max_len=72):
-    value = " ".join((value or "").split())
-    if len(value) <= max_len:
-        return value
-    return value[: max_len - 3].rstrip() + "..."
-
-
-def set_top_level(lines, key, value):
-    prefix = f"{key}:"
-    for index, line in enumerate(lines):
-        if line.startswith(prefix):
-            lines[index] = f"{key}: {value}"
-            return
-    lines.append(f"{key}: {value}")
-
-
-current_fields = read_top_level_fields(workspace_path)
-base_title = (
-    current_fields.get("name")
-    or current_fields.get("summary")
-    or f"Session {current_session_id[:8]}"
-)
-branch_title = f"Branch: {compact(base_title)} [{new_session_id[:8]}]"
-now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-shutil.copytree(current_session, new_session)
-
-new_workspace_path = new_session / "workspace.yaml"
-workspace_lines = new_workspace_path.read_text(encoding="utf-8").splitlines()
-set_top_level(workspace_lines, "id", new_session_id)
-set_top_level(workspace_lines, "name", yaml_string(branch_title))
-set_top_level(workspace_lines, "user_named", "true")
-set_top_level(workspace_lines, "summary", yaml_string(branch_title))
-set_top_level(workspace_lines, "created_at", now)
-set_top_level(workspace_lines, "updated_at", now)
-set_top_level(workspace_lines, "branch_of", current_session_id)
-set_top_level(
-    workspace_lines,
-    "branch_note",
-    yaml_string(f"Branched from: {base_title} ({current_session_id})"),
-)
-new_workspace_path.write_text("\n".join(workspace_lines) + "\n", encoding="utf-8")
-
-events_path = new_session / "events.jsonl"
-if events_path.exists():
-    rewritten_events = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        event = json.loads(line)
-        if event.get("type") == "session.start":
-            data = event.setdefault("data", {})
-            data["sessionId"] = new_session_id
-            if "alreadyInUse" in data:
-                data["alreadyInUse"] = False
-            for key in ("name", "title", "summary"):
-                if key in data:
-                    data[key] = branch_title
-        rewritten_events.append(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
-    events_path.write_text("\n".join(rewritten_events) + "\n", encoding="utf-8")
-
-rewind_dir = new_session / "rewind-snapshots"
-rewind_dir.mkdir(exist_ok=True)
-(rewind_dir / "index.json").write_text(
-    '{"version":1,"snapshots":[],"filePathMap":{}}\n',
-    encoding="utf-8",
-)
-backup_dir = rewind_dir / "backups"
-if backup_dir.exists():
-    for child in backup_dir.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-for path in [new_session / "session.db", *new_session.glob("inuse.*.lock")]:
-    if path.exists():
-        path.unlink()
-
-checkpoint_dir = new_session / "checkpoints"
-checkpoint_dir.mkdir(exist_ok=True)
-(checkpoint_dir / "index.md").write_text(
-    "# Checkpoint History\n\n"
-    "Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.\n\n"
-    "| # | Title | File |\n"
-    "|---|-------|------|\n",
-    encoding="utf-8",
-)
-
-print(f"NEW_SESSION_ID={new_session_id}")
-print(f"NEW_SESSION_NAME={branch_title}")
-print(f"NEW_SESSION_PATH={new_session}")
-'@
-
-$branchScript | & $PYTHON_BIN - $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
-```
-
-Use the printed `NEW_SESSION_ID`, `NEW_SESSION_NAME`, and `NEW_SESSION_PATH` values in the success message.
-
-When invoking PowerShell from the agent, capture the printed values into variables for use in later steps. For example, run the branch script and parse its `key=value` output:
-
-```powershell
-$branchOutput = $branchScript | & $PYTHON_BIN - $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
 $branchValues = @{}
 foreach ($line in $branchOutput) {
     if ($line -match '^([A-Z_]+)=(.*)$') {
@@ -450,178 +178,71 @@ Get-ChildItem (Join-Path $HOME ".copilot\session-state\*\workspace.yaml") | ForE
 
 Only run this step if the user explicitly asked to launch the branched session in a terminal (e.g., "branch and launch in terminal", "launch in terminal", "open in a new tab"). When this mode is requested, **replace** the standard "Report Success" output with a minimal launch announcement (no resume commands, no branch listing snippets, no worktree resume hints).
 
-**Platform**: Windows-only. It depends on Windows Terminal (`wt.exe`) and the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper. If the user is on Bash/macOS/Linux, do **not** attempt the launch — fall back to the standard "Report Success" output and tell the user that launch-in-terminal is currently Windows-only.
+**Platform**: Windows-only. The launch helper depends on Windows Terminal (`wt.exe`) and the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) skill. On Bash/macOS/Linux, do **not** attempt the launch — fall back to the standard "Report Success" output and tell the user that launch-in-terminal is currently Windows-only.
 
 **Ordering**: If the user also asked to truncate (e.g., "branch from N turns ago and launch in terminal"), perform Step 5 (Truncation) **before** running this step, so the resumed session loads the truncated state.
 
-#### Step 4a — Locate the launch-copilot-terminal helper
-
-The plugin install location varies between hosts. Try the following in order, take the first existing path:
+#### Run the wrapper
 
 ```powershell
-$LAUNCH_SCRIPT_PATH = $null
-$candidatePaths = @(
-    # Sibling skill in the same checked-out repo as session-branch
-    (Join-Path (Split-Path -Parent $PSScriptRoot) "launch-copilot-terminal\Launch-CopilotTerminal.ps1"),
-    # Default plugin install path
-    (Join-Path $HOME ".copilot\skills\launch-copilot-terminal\Launch-CopilotTerminal.ps1")
-)
-foreach ($candidate in $candidatePaths) {
-    if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-        $LAUNCH_SCRIPT_PATH = (Resolve-Path -LiteralPath $candidate).ProviderPath
-        break
-    }
+# $SKILL_DIR is the directory containing this SKILL.md.
+# $WORKTREE_DIR is set only if the Worktree Branching section ran.
+# $LAUNCH_COLOR is "purple" by default; override if the user specified one.
+
+$launchArgs = @{
+    CurrentSession = $CURRENT_SESSION
+    NewSessionId   = $NEW_SESSION_ID
+    NewSessionName = $NEW_SESSION_NAME
 }
-if (-not $LAUNCH_SCRIPT_PATH) {
-    $found = Get-ChildItem -Path (Join-Path $HOME ".copilot") -Recurse -Filter "Launch-CopilotTerminal.ps1" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($found) { $LAUNCH_SCRIPT_PATH = $found.FullName }
-}
+if ($WORKTREE_DIR)  { $launchArgs.WorktreeDir = $WORKTREE_DIR }
+if ($LAUNCH_COLOR)  { $launchArgs.Color       = $LAUNCH_COLOR }
+
+& (Join-Path $SKILL_DIR "scripts\Launch-BranchedSession.ps1") @launchArgs
+$launchExit = $LASTEXITCODE
 ```
 
-If `$LAUNCH_SCRIPT_PATH` is still `$null`, fall back to the standard "Report Success" output and tell the user the launch helper was not available.
+`Launch-BranchedSession.ps1` handles the full flow: locates the `launch-copilot-terminal` helper (sibling skill dir, default plugin install path, or recursive fallback under `~/.copilot`); detects parent CLI flags (`--yolo`, `--allow-all`, `--alt-screen`, `--model …`) and forwards them on resume; resolves the working directory (worktree dir, original session `cwd:`, or current location as last resort); calls the helper with `-Resume <new-id> -Window current`; and emits the minimal launch-announcement message on success.
 
-#### Step 4b — Detect CLI flags
+The wrapper resumes by **session ID** (not name) to avoid name collisions, and uses `-Window current` (`wt -w 0`) so the new tab lands beside the current Copilot session.
 
-Detect the same way Step 3 does. The launch helper preserves these on the resumed session.
+#### On failure, fall back
+
+The wrapper exits non-zero (`2` = non-Windows, `3` = helper not found, `4` = helper invocation failed, plus any error from `Launch-CopilotTerminal.ps1` itself) and writes a warning. When `$launchExit -ne 0`, fall back to the standard Step 3 "Report Success" output so the user still gets working resume instructions.
 
 ```powershell
-$COPILOT_FLAGS = ""
-try {
-    $currentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue
-    if ($currentProcess -and $currentProcess.ParentProcessId) {
-        $parentProcess = Get-CimInstance Win32_Process -Filter "ProcessId=$($currentProcess.ParentProcessId)" -ErrorAction SilentlyContinue
-        $parentCommand = if ($parentProcess) { $parentProcess.CommandLine } else { "" }
-        $flags = [regex]::Matches($parentCommand, '(--yolo|--allow-all|--alt-screen|--model\s+\S+)') | ForEach-Object { $_.Value }
-        if ($flags) { $COPILOT_FLAGS = ($flags -join ' ') }
-    }
-} catch {
-    $COPILOT_FLAGS = ""
-}
-
-$COPILOT_FLAGS_ARRAY = @()
-if (-not [string]::IsNullOrWhiteSpace($COPILOT_FLAGS)) {
-    $COPILOT_FLAGS_ARRAY = $COPILOT_FLAGS.Trim() -split '\s+'
+if ($launchExit -ne 0) {
+    # Emit the standard Step 3 report-success block.
 }
 ```
 
-#### Step 4c — Resolve title, color, and cwd
+#### Minimal success message (when launch succeeds)
 
-- **Title**: use `$NEW_SESSION_NAME` from Step 2 (it already contains the new ID prefix and is safe as both a `wt` tab title and a Copilot resume target).
-- **Color**: default `purple` to make branched sessions visually distinct. If the user requested a specific color (e.g., "launch in terminal in green"), use that instead.
-- **Cwd**: if a worktree was created (see "Worktree Branching" below), use that worktree directory. Otherwise read `cwd:` from the original session's `workspace.yaml`:
-
-```powershell
-$LAUNCH_COLOR = "purple"   # override if the user requested a specific color
-$LAUNCH_CWD   = $null
-if ($WORKTREE_DIR -and (Test-Path -LiteralPath $WORKTREE_DIR -PathType Container)) {
-    $LAUNCH_CWD = (Resolve-Path -LiteralPath $WORKTREE_DIR).ProviderPath
-} else {
-    $workspacePath = Join-Path $CURRENT_SESSION "workspace.yaml"
-    foreach ($line in Get-Content -LiteralPath $workspacePath -Encoding UTF8) {
-        if ($line -match '^cwd:\s*(.*)$') {
-            $LAUNCH_CWD = $Matches[1].Trim().Trim('"').Trim("'")
-            break
-        }
-    }
-}
-if (-not $LAUNCH_CWD -or -not (Test-Path -LiteralPath $LAUNCH_CWD -PathType Container)) {
-    $LAUNCH_CWD = (Get-Location).ProviderPath
-}
-```
-
-#### Step 4d — Launch
-
-```powershell
-try {
-    & $LAUNCH_SCRIPT_PATH `
-        -Title $NEW_SESSION_NAME `
-        -Color $LAUNCH_COLOR `
-        -Cwd $LAUNCH_CWD `
-        -Resume $NEW_SESSION_ID `
-        -Window current `
-        -CopilotArgs $COPILOT_FLAGS_ARRAY
-} catch {
-    # Launch helper failed (e.g., wt.exe missing, invalid cwd, wt.exe non-zero exit).
-    # Fall back to the standard Step 3 output and surface the failure reason.
-    Write-Warning "Launch helper failed: $($_.Exception.Message). Falling back to resume instructions."
-    # Then emit the standard Report Success block from Step 3.
-    return
-}
-```
-
-Resume by `$NEW_SESSION_ID` (not name) to avoid any chance of name collision. `-Window current` maps to `wt -w 0`, which opens the new tab in the most-recently-used Windows Terminal window — i.e., next to the current Copilot session.
-
-#### Step 4e — Minimal success report (replaces Step 3 output)
-
-When the launch succeeds, the only message back to the user should be the new session ID and a confirmation that the terminal is being launched:
+The wrapper prints these two lines on success; do not duplicate them. Do not echo any resume commands, branch listing instructions, or worktree resume hints in this mode.
 
 ```
-✅ Branched session: <NEW_SESSION_ID>
-🚀 Launching it in a new Windows Terminal tab in this window...
+OK Branched session: <NEW_SESSION_ID>
+-> Launching it in a new Windows Terminal tab in this window...
 ```
-
-Do not echo the resume commands, branch listing instructions, or worktree resume hints in this mode.
 
 ### 5. Truncation (Only If Requested)
 
-If user says "branch from N turns ago", truncate events.jsonl to remove the last N turns:
+If the user says "branch from N turns ago", invoke `scripts/truncate_session.py` against the branched session to remove the last N user turns from `events.jsonl`. Run this **before** Step 4 if launch-in-terminal was also requested.
 
 #### Bash
 
 ```bash
-"$PYTHON_BIN" -c "
-import json, sys
-
-turns_back = int(sys.argv[1])
-lines = open('$NEW_SESSION/events.jsonl').readlines()
-events = [json.loads(l.strip()) for l in lines]
-
-# Find user.message events (each = 1 turn)
-user_msgs = [(i, e) for i, e in enumerate(events) if e['type'] == 'user.message']
-if turns_back >= len(user_msgs):
-    print('Error: only', len(user_msgs), 'turns exist')
-    sys.exit(1)
-
-# Cut at the Nth-from-last user message
-cut_idx = user_msgs[-turns_back][0]
-events = events[:cut_idx]
-
-with open('$NEW_SESSION/events.jsonl', 'w') as f:
-    for e in events:
-        f.write(json.dumps(e, separators=(',', ':')) + '\n')
-print(f'Truncated to {len(events)} events (removed last {turns_back} turns)')
-" N
+# $SKILL_DIR is the directory containing this SKILL.md.
+"$PYTHON_BIN" "$SKILL_DIR/scripts/truncate_session.py" "$NEW_SESSION" N
 ```
 
 #### PowerShell
 
 ```powershell
-$truncateScript = @'
-import json
-import sys
-from pathlib import Path
-
-turns_back = int(sys.argv[1])
-session_dir = Path(sys.argv[2])
-events_file = session_dir / "events.jsonl"
-
-events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-user_msgs = [(index, event) for index, event in enumerate(events) if event.get("type") == "user.message"]
-if turns_back >= len(user_msgs):
-    print(f"Error: only {len(user_msgs)} turns exist")
-    sys.exit(1)
-
-cut_idx = user_msgs[-turns_back][0]
-events = events[:cut_idx]
-events_file.write_text(
-    "".join(json.dumps(event, separators=(",", ":")) + "\n" for event in events),
-    encoding="utf-8",
-)
-print(f"Truncated to {len(events)} events (removed last {turns_back} turns)")
-'@
-
-$truncateScript | & $PYTHON_BIN - N $NEW_SESSION
+# $SKILL_DIR is the directory containing this SKILL.md.
+& $PYTHON_BIN (Join-Path $SKILL_DIR "scripts\truncate_session.py") $NEW_SESSION N
 ```
+
+The script counts `user.message` events as turns and exits non-zero if `N` exceeds the number of available turns.
 
 ## Notes
 
