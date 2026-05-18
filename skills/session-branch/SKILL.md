@@ -22,7 +22,8 @@ This skill ships with helper scripts in `scripts/` next to this `SKILL.md`. They
 
 | Script | Purpose |
 |---|---|
-| `scripts/branch_session.py` | Copy a session, rewrite metadata, and reset rewind/checkpoints. |
+| `scripts/branch_session.py` | Copy a session into a staging directory, rewrite `workspace.yaml` identity/title/lineage (YAML-aware: handles `\|`, `>`, `\|-`, `>-` etc. block scalars and block mappings), rewrite `session.start` event metadata, reset rewind/checkpoints, drop `session.db` / stale `inuse.*.lock` files, validate the rewritten YAML (no duplicate top-level keys, no orphan indented lines), and atomically rename into place. Cleans up the staging dir on any failure. |
+| `scripts/test_branch_session.py` | Unit + end-to-end tests for `branch_session.py`. Run with `python -m unittest test_branch_session` from `scripts/`. |
 | `scripts/truncate_session.py` | Drop the last N user turns from the branched session's `events.jsonl`. |
 | `scripts/Launch-BranchedSession.ps1` | (Windows-only) Open the branched session in a new Windows Terminal tab inside the current window via the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper. |
 
@@ -248,6 +249,8 @@ The script counts `user.message` events as turns and exits non-zero if `N` excee
 
 - Both sessions are fully independent after branching
 - The original session is never modified
+- The branch operation is **atomic**: contents are staged in `<state_dir>/.tmp-branch-<uuid>` and only renamed to the final destination after the YAML rewrite and validation succeed. On any failure the staging dir is removed, so the state directory never contains a half-branched session.
+- The `workspace.yaml` rewriter is **YAML-aware**: source names written as block scalars (`name: \|-`, `name: >`, etc.) are correctly read as their reconstructed text content (not as the literal `\|-` indicator) and their block bodies are fully replaced (not left orphaned beside the new `name:` line).
 - Rewind/checkpoint history starts fresh in the branch
 - Session database (session.db) is removed in the branch to avoid stale references
 - Stale `inuse.*.lock` files are removed from the branch so it does not inherit the original session's in-use marker
@@ -255,6 +258,7 @@ The script counts `user.message` events as turns and exits non-zero if `N` excee
 - `user_named: true` keeps Copilot from replacing the branch title with the same auto-generated title as the original session
 - `summary` is updated for older picker/search surfaces, but it may still be regenerated later and should not be the only branch identifier
 - `branch_of` and `branch_note` fields in workspace.yaml track lineage (copilot preserves these custom fields)
+- The rewriter refuses to rewrite a `workspace.yaml` that has duplicate top-level keys, so a corrupted source session cannot produce a doubly-corrupted branch.
 
 ## Worktree Branching (Optional)
 
