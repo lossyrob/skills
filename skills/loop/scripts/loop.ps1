@@ -299,7 +299,11 @@ function Write-LoopEvent {
     New-Item -ItemType Directory -Force -Path $EventDir | Out-Null
     $safeKind = $Kind -replace '[^A-Za-z0-9_.-]', '_'
     $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ')
-    $path = Join-Path $EventDir ("{0}-attempt-{1}-{2}-{3}.json" -f $timestamp, $Result.attempt, $safeKind, ([guid]::NewGuid().ToString('N')))
+    $attemptNumber = 0
+    if ($null -ne $Result.PSObject.Properties['attempt']) {
+        $attemptNumber = [int]$Result.attempt
+    }
+    $path = Join-Path $EventDir ("{0}-attempt-{1:D10}-{2}-{3}.json" -f $timestamp, $attemptNumber, $safeKind, ([guid]::NewGuid().ToString('N')))
     $event = [ordered]@{
         schemaVersion = 1
         timestamp = Get-UtcTimestamp
@@ -340,16 +344,21 @@ $Command
     }
 "@
     $stderrPath = [System.IO.Path]::GetTempFileName()
-    $stdoutItems = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $wrappedCommand 2> $stderrPath
-    $exitCode = $LASTEXITCODE
-    $stdoutText = ConvertTo-PlainText -Items @($stdoutItems)
+    $stdoutText = ''
     $stderrText = ''
-    if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
-        $stderrText = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+    $exitCode = $null
+    try {
+        $stdoutItems = & $shell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command $wrappedCommand 2> $stderrPath
+        $exitCode = $LASTEXITCODE
+        $stdoutText = ConvertTo-PlainText -Items @($stdoutItems)
+        if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
+            $stderrText = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+        }
+        if ($null -eq $stderrText) {
+            $stderrText = ''
+        }
+    } finally {
         Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
-    }
-    if ($null -eq $stderrText) {
-        $stderrText = ''
     }
     if (-not $Quiet) {
         if ($stdoutText) {

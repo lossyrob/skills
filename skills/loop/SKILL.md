@@ -118,10 +118,12 @@ For long-running PowerShell loops that an agent will monitor over time, prefer d
   -IntervalSeconds 60 `
   -TimeoutSeconds 43200 `
   -RetryExitCode 10 `
-  -StopExitCode 23
+  -StopExitCode 23 `
+  [-Quiet] `
+  [-Force]
 ```
 
-The detached launcher writes a run directory containing `manifest.json`, `loop.pid`, `stdout.log`, `stderr.log`, `last-result.json`, `heartbeat.json`, and immutable event files under `events\`. Check it with:
+The detached launcher writes a run directory containing `manifest.json`, `loop.pid`, `stdout.log`, `stderr.log`, `last-result.json`, `heartbeat.json`, and immutable event files under `events\`. `manifest.json` records both the PID and process start time so status checks can reject recycled PIDs. Use `-Quiet` to suppress loop chatter in redirected logs. Use `-Force` only when intentionally reusing an explicit `-RunDir` whose prior loop is known to be stopped.
 
 ```powershell
 .\scripts\Get-LoopStatus.ps1 -RunDir "<run-dir>"

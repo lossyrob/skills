@@ -38,6 +38,7 @@ param(
 
     [switch]$Invert,
     [switch]$Quiet,
+    [switch]$Force,
     [switch]$DryRun
 )
 
@@ -83,6 +84,69 @@ function Write-JsonFile {
     [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine, $utf8NoBom)
 }
 
+function Read-JsonFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+    return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+}
+
+function Get-JsonProperty {
+    param(
+        [AllowNull()][object]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Object) {
+        return $null
+    }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($property) {
+        return $property.Value
+    }
+    return $null
+}
+
+function ConvertTo-UtcDateTime {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $null
+    }
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+    $parsed = [datetime]::MinValue
+    if ([datetime]::TryParse(([string]$Value).Trim(), [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+    return $null
+}
+
+function Test-ManifestProcessAlive {
+    param([AllowNull()][object]$Manifest)
+    $manifestPid = Get-JsonProperty -Object $Manifest -Name 'pid'
+    if ($null -eq $manifestPid) {
+        return $false
+    }
+    $processId = 0
+    if (-not [int]::TryParse(([string]$manifestPid).Trim(), [ref]$processId) -or $processId -le 0) {
+        return $false
+    }
+    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    if (-not $process) {
+        return $false
+    }
+
+    $expectedStart = ConvertTo-UtcDateTime -Value (Get-JsonProperty -Object $Manifest -Name 'processStartTime')
+    if (-not $expectedStart) {
+        return $true
+    }
+    try {
+        $actualStart = $process.StartTime.ToUniversalTime()
+        return [Math]::Abs(($actualStart - $expectedStart).TotalSeconds) -le 2
+    } catch {
+        return $false
+    }
+}
+
 function ConvertTo-ProcessArgumentString {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     ($Arguments | ForEach-Object {
@@ -100,12 +164,20 @@ function ConvertTo-PowerShellSingleQuotedString {
 }
 
 $safeName = ConvertTo-SafeName -Value $Name
+$runDirProvided = -not [string]::IsNullOrWhiteSpace($RunDir)
 if (-not $RunDir) {
     $timestamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
     $suffix = [guid]::NewGuid().ToString('N').Substring(0, 8)
     $RunDir = Join-Path $HOME (".copilot\loop-runs\{0}-{1}-{2}" -f $safeName, $timestamp, $suffix)
 }
 $RunDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($RunDir)
+$manifestPath = Join-Path $RunDir 'manifest.json'
+if ($runDirProvided -and -not $Force -and (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    $existingManifest = Read-JsonFile -Path $manifestPath
+    if (Test-ManifestProcessAlive -Manifest $existingManifest) {
+        throw "Run directory already contains a live loop. Use -Force to overwrite: $RunDir"
+    }
+}
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 
 $scriptDir = $PSScriptRoot
@@ -115,7 +187,6 @@ if (-not (Test-Path -LiteralPath $loopScript -PathType Leaf)) {
 }
 
 $paramsPath = Join-Path $RunDir 'params.json'
-$manifestPath = Join-Path $RunDir 'manifest.json'
 $pidPath = Join-Path $RunDir 'loop.pid'
 $wrapperPath = Join-Path $RunDir 'run-loop.ps1'
 $stdoutPath = Join-Path $RunDir 'stdout.log'
@@ -150,7 +221,7 @@ $params = [ordered]@{
     HeartbeatPath = $heartbeatPath
     EventDir = $eventDir
     Invert = [bool]$Invert
-    Quiet = $true
+    Quiet = [bool]$Quiet
     DryRun = $false
 }
 Write-JsonFile -Path $paramsPath -Value $params
@@ -207,6 +278,13 @@ if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
     $startProcessArgs.WindowStyle = 'Hidden'
 }
 $process = Start-Process @startProcessArgs
+$processStartTime = $null
+try {
+    $process.Refresh()
+    $processStartTime = $process.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+} catch {
+    Write-Warning "started loop process $($process.Id), but could not read its start time: $_"
+}
 
 [System.IO.File]::WriteAllText($pidPath, [string]$process.Id + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 
@@ -215,6 +293,7 @@ foreach ($key in $plan.Keys) {
     $manifest[$key] = $plan[$key]
 }
 $manifest.pid = $process.Id
+$manifest.processStartTime = $processStartTime
 $manifest.startedAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
 Write-JsonFile -Path $manifestPath -Value $manifest
 

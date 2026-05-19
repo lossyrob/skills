@@ -235,7 +235,7 @@ scripts/loop.sh --check 'test "$LOOP_ATTEMPT" -ge 3' --interval 1 --timeout 10
 }
 ```
 
-If the check command prints a JSON object with `status` or `event`, those values are copied into the latest-result file. Terminal states (`success`, actionable stop codes, fatal errors, timeout/max-tries, action/ack failures, and crashes) also write immutable event files under `EventDir` so an agent can recover missed terminal output.
+If the check command prints a JSON object with `status` or `event`, those values are copied into the latest-result file. Treat those values as check-reported, untrusted labels: the runner's authoritative state is `loopStatus`, `checkExitCode`, and `terminal`. Terminal states (`success`, actionable stop codes, fatal errors, timeout/max-tries, action/ack failures, and crashes) also write immutable event files under `EventDir` so an agent can recover missed terminal output.
 
 ## Detached PowerShell loops
 
@@ -255,13 +255,15 @@ The run directory contains:
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | Process ID, command, and all important paths. |
+| `manifest.json` | Process ID, process start time, command, and all important paths. |
 | `params.json` | Full loop parameter set. Complex check/action strings are passed through this file, not through `Start-Process` command-line quoting. |
 | `loop.pid` | Loop process ID. |
-| `stdout.log` / `stderr.log` | Redirected terminal output. |
+| `stdout.log` / `stderr.log` | Redirected terminal output. Pass `-Quiet` to `Start-LoopDetached.ps1` to keep these sparse. |
 | `last-result.json` | Latest structured check result. |
 | `heartbeat.json` | Latest heartbeat (`checking`, `sleeping`, `action`, etc.). |
 | `events\*.json` | Immutable terminal/actionable events. |
+
+When `-RunDir` is provided explicitly, `Start-LoopDetached.ps1` refuses to overwrite a directory whose manifest still points at a live loop process. Use `-Force` only after confirming the prior process is stopped or intentionally abandoning that run.
 
 Inspect the run with:
 
@@ -269,21 +271,24 @@ Inspect the run with:
 .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
 ```
 
-`Get-LoopStatus.ps1` checks both PID liveness and heartbeat freshness. It reports:
+`Get-LoopStatus.ps1` checks PID liveness, process start time, and heartbeat freshness. Start-time validation prevents a recycled PID from making an old run look alive. Heartbeat freshness uses `heartbeat.nextAttemptAfter` or `heartbeat.nextSleepSeconds` when present, then falls back to `2 * IntervalSeconds + GraceSeconds`.
 
 | Classification | Meaning |
 |---|---|
 | `starting` | PID exists but no heartbeat has been written yet. |
 | `running` | PID exists and heartbeat is fresh. |
-| `stalled` | PID exists but heartbeat is older than `2 * IntervalSeconds + GraceSeconds`; the check may be hung or unusually slow. |
+| `stalled` | PID exists but heartbeat is past its expected freshness deadline; the check may be hung or unusually slow. |
 | `actionable` | Latest immutable event is an actionable stop-code event. |
 | `final` | Latest immutable event is terminal (success, timeout, fatal, etc.). |
 | `crashed` | PID is gone and no terminal event was written. |
+
+Detached run directories are durable scratch state. They may contain command strings, stdout/stderr, and check-reported JSON, so do not put secrets in inline commands or check output. Keep run directories out of source control and delete old runs under `$HOME\.copilot\loop-runs\` when they are no longer useful.
 
 ## Safety notes
 
 - Prefer checked-in helper scripts or temporary scripts over complex inline commands.
 - Do not run untrusted command strings.
+- Do not include secrets in check/action command strings or output; `params.json`, `stdout.log`, `stderr.log`, `last-result.json`, and `events\*.json` persist them until the run directory is deleted.
 - Quote inline commands for the shell that will execute them. Prefer helper scripts when quoting becomes hard to audit.
 - Do not advance persisted markers from a check that returns an actionable stop code.
 - If follow-up requires agent reasoning, leave action/ack out of the loop runner; stop, let the agent act, then run an explicit ack command.
