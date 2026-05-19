@@ -16,12 +16,19 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$PromptFile,
 
+    [Parameter(Mandatory = $true, ParameterSetName = "Resume")]
+    [ValidateNotNullOrEmpty()]
+    [string]$Resume,
+
     [string]$Cwd = (Get-Location).ProviderPath,
 
     [string[]]$CopilotArgs = @(),
 
     [ValidateNotNullOrEmpty()]
     [string]$CopilotCommand = "copilot",
+
+    [ValidateSet("new", "current")]
+    [string]$Window = "new",
 
     [switch]$DryRun
 )
@@ -132,6 +139,10 @@ function Get-PromptText {
         return Get-Content -LiteralPath $resolvedPromptFile.ProviderPath -Raw -Encoding UTF8
     }
 
+    if ($PSCmdlet.ParameterSetName -eq "Resume") {
+        return $null
+    }
+
     return $Prompt
 }
 
@@ -148,8 +159,13 @@ function New-CopilotLaunchScript {
         [Parameter(Mandatory = $true)]
         [string]$Directory,
 
-        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [AllowNull()]
         [string]$PromptText,
+
+        [AllowEmptyString()]
+        [AllowNull()]
+        [string]$ResumeTarget,
 
         [Parameter(Mandatory = $true)]
         [string]$Command,
@@ -161,7 +177,6 @@ function New-CopilotLaunchScript {
     New-Item -ItemType Directory -Force -Path $launchRoot | Out-Null
 
     $launchScriptPath = Join-Path $launchRoot ("launch-{0}-{1}.ps1" -f ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()), ([guid]::NewGuid().ToString()))
-    $promptJson = ConvertTo-Json -InputObject $PromptText -Compress
     $argLiterals = @($Args | ForEach-Object { ConvertTo-PowerShellLiteral $_ })
     $argArray = if ($argLiterals.Count -gt 0) { $argLiterals -join ", " } else { "" }
 
@@ -170,10 +185,16 @@ function New-CopilotLaunchScript {
         'if ($launchScriptPath) { Remove-Item -LiteralPath $launchScriptPath -Force -ErrorAction Continue }',
         '$ErrorActionPreference = "Stop"',
         "Set-Location -LiteralPath $(ConvertTo-PowerShellLiteral $Directory)",
-        "`$copilotPrompt = ConvertFrom-Json $(ConvertTo-PowerShellLiteral $promptJson)",
-        "`$copilotArgs = @($argArray)",
-        "& $(ConvertTo-PowerShellLiteral $Command) @copilotArgs '-i' `$copilotPrompt"
+        "`$copilotArgs = @($argArray)"
     )
+
+    if ($ResumeTarget) {
+        $lines += "& $(ConvertTo-PowerShellLiteral $Command) @copilotArgs '--resume' $(ConvertTo-PowerShellLiteral $ResumeTarget)"
+    } else {
+        $promptJson = ConvertTo-Json -InputObject $PromptText -Compress
+        $lines += "`$copilotPrompt = ConvertFrom-Json $(ConvertTo-PowerShellLiteral $promptJson)"
+        $lines += "& $(ConvertTo-PowerShellLiteral $Command) @copilotArgs '-i' `$copilotPrompt"
+    }
 
     Set-Content -LiteralPath $launchScriptPath -Value ($lines -join [Environment]::NewLine) -Encoding UTF8
     return $launchScriptPath
@@ -190,16 +211,19 @@ if (-not (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
 $resolvedCwd = Resolve-LaunchDirectory -Path $Cwd
 $tabColor = ConvertTo-TabColor -Value $Color
 $promptText = Get-PromptText
-if ([string]::IsNullOrWhiteSpace($promptText)) {
+if ($PSCmdlet.ParameterSetName -ne "Resume" -and [string]::IsNullOrWhiteSpace($promptText)) {
     throw "Prompt must not be empty."
 }
 
 $shell = Select-PowerShellExecutable
-$launchScript = New-CopilotLaunchScript -Directory $resolvedCwd -PromptText $promptText -Command $CopilotCommand -Args $CopilotArgs
+$resumeTarget = if ($PSCmdlet.ParameterSetName -eq "Resume") { $Resume } else { $null }
+$launchScript = New-CopilotLaunchScript -Directory $resolvedCwd -PromptText $promptText -ResumeTarget $resumeTarget -Command $CopilotCommand -Args $CopilotArgs
+
+$windowTarget = if ($Window -eq "current") { "0" } else { "-1" }
 
 $wtArgs = @(
     "-w",
-    "-1",
+    $windowTarget,
     "new-tab",
     "--title",
     (Escape-WindowsTerminalArgument -Value $Title),
@@ -224,6 +248,8 @@ if ($DryRun) {
         tabColor = $tabColor
         copilotCommand = $CopilotCommand
         copilotArgs = $CopilotArgs
+        window = $Window
+        resume = $resumeTarget
     } | ConvertTo-Json -Depth 4
     return
 }

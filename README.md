@@ -24,13 +24,14 @@ copilot plugin install lossyrob-skills@lossyrob-skills
 
 ### launch-copilot-terminal
 
-Launch a new Windows Terminal window running Copilot CLI with a requested title, tab color, working directory, and seeded interactive prompt. Useful for starting parallel Copilot sessions or focused worker windows from an existing session.
+Launch a new Windows Terminal tab running Copilot CLI with a requested title, tab color, and working directory. Supports a prompt-driven interactive session, an existing-session resume, and targeting either a separate window or the current Windows Terminal window. Useful for starting parallel Copilot sessions, focused worker windows, or opening a resumed session beside the current one.
 
 **Trigger phrases:** "launch Copilot terminal", "open Copilot window", "start Copilot session", "spawn Copilot worker"
 
 **Features:**
-- Opens a separate Windows Terminal window with a chosen title and tab color
-- Starts Copilot CLI interactively with `copilot -i <prompt>`
+- Opens a Windows Terminal tab with a chosen title and tab color
+- Two modes: **prompt mode** starts Copilot with `copilot -i <prompt>`; **resume mode** reattaches to an existing session with `copilot --resume <id-or-name>` (no prompt submitted)
+- `-Window {new|current}` selects whether the tab opens in a separate window (`wt -w -1`, the default) or in the current Windows Terminal window (`wt -w 0`)
 - Supports explicit working directories, extra Copilot CLI arguments, and prompt files
 - Includes dry-run output for inspecting the generated launch command
 
@@ -55,17 +56,19 @@ Repeatedly run a check command or script on a configurable interval until a cond
 
 Branch the current Copilot CLI session, creating a new session that inherits conversation history up to the current point while preserving the original session intact. Useful for experimentation or parallel development without losing your place.
 
-**Trigger phrases:** "branch", "branch session", "fork session", "create a branch from here"
+**Trigger phrases:** "branch", "branch session", "fork session", "create a branch from here". Append "launch in terminal" or "open in a new tab" to open the branched session in a new Windows Terminal tab beside the current one (Windows only).
 
 **Features:**
-- Copies full session state (events, workspace config)
-- Includes Bash and Windows PowerShell branching workflows
-- Assigns each branch a unique Copilot CLI resume title like `Branch: <title> [<id>]`
-- Tracks lineage via `branch_of` / `branch_note` in `workspace.yaml`
-- Removes stale in-use locks from the branched session
-- Resets checkpoints and rewind snapshots for a clean slate
-- Optional truncation ("branch from N turns ago")
-- Optional git worktree integration
+- Copies full session state (events, workspace config) into a temporary staging directory and atomically renames into place; failed branches never leave a half-branched session on disk
+- YAML-aware `workspace.yaml` rewriter handles block-scalar names (`name: |-`, folded `>`, etc.) correctly — the original block body is fully replaced and the branch title is derived from the reconstructed content
+- Post-rewrite validation refuses duplicate top-level keys and orphan indented lines, so corruption in the source is caught before the branched session is committed to disk
+- Assigns each branch a unique Copilot CLI resume title like `Branch: <title> [<id>]` and tracks lineage via `branch_of` / `branch_note` in `workspace.yaml`
+- Includes Bash and Windows PowerShell branching workflows; branch logic ships as `scripts/branch_session.py` with a `unittest` test suite
+- Removes stale in-use locks from the branched session; resets checkpoints and rewind snapshots for a clean slate
+- Optional "launch in terminal" mode (Windows-only) opens the branched session in a new Windows Terminal tab inside the current window via the [`launch-copilot-terminal`](#launch-copilot-terminal) helper
+- Optional truncation ("branch from N turns ago") and optional git worktree integration
+
+**Requirements:** Python 3. The launch-in-terminal mode additionally requires Windows, Windows Terminal (`wt.exe`), and the `launch-copilot-terminal` skill.
 
 ### odt-convert
 

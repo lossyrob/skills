@@ -14,9 +14,24 @@ Use this skill when the user says:
 - "create a branch from here"
 - "save this point and branch"
 
+If the branch request also includes "launch in terminal", "open in terminal", "in a new tab", or similar, follow the [Launch in Terminal (Optional)](#launch-in-terminal-optional) flow instead of the default success report. This Windows-only mode opens the branched session in a new Windows Terminal tab inside the current window using the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper.
+
+## Bundled scripts
+
+This skill ships with helper scripts in `scripts/` next to this `SKILL.md`. They are the canonical implementation of the heavy lifting; the snippets below just orchestrate them.
+
+| Script | Purpose |
+|---|---|
+| `scripts/branch_session.py` | Copy a session into a staging directory, rewrite `workspace.yaml` identity/title/lineage (YAML-aware: handles `\|`, `>`, `\|-`, `>-` etc. block scalars and block mappings), rewrite `session.start` event metadata, reset rewind/checkpoints, drop `session.db` / stale `inuse.*.lock` files, validate the rewritten YAML (no duplicate top-level keys, no orphan indented lines), and atomically rename into place. Cleans up the staging dir on any failure. |
+| `scripts/test_branch_session.py` | Unit + end-to-end tests for `branch_session.py`. Run with `python -m unittest test_branch_session` from `scripts/`. |
+| `scripts/truncate_session.py` | Drop the last N user turns from the branched session's `events.jsonl`. |
+| `scripts/Launch-BranchedSession.ps1` | (Windows-only) Open the branched session in a new Windows Terminal tab inside the current window via the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) helper. |
+
+Resolve the skill directory however your environment exposes it (e.g. the directory containing this `SKILL.md`). Examples below use `$SKILL_DIR` (Bash) or `$PSScriptRoot` after dot-sourcing / `Split-Path` of the SKILL.md path; substitute your actual lookup.
+
 ## Instructions
 
-When invoked, perform the following steps. Use PowerShell on Windows and Bash on macOS/Linux. Keep the branch operation in a single script for the selected shell so session copying, metadata rewrite, and cleanup happen together.
+When invoked, perform the following steps. Use PowerShell on Windows and Bash on macOS/Linux.
 
 ### 1. Identify Current Session
 
@@ -24,7 +39,7 @@ The current session ID is in `<session_context>` → session folder path.
 
 ### 2. Run Branch Script
 
-Run the script for the current shell, substituting `CURRENT_SESSION_ID` with the actual value.
+Generate a new session ID, then invoke `scripts/branch_session.py` to copy the session and rewrite metadata. Capture the printed `NEW_SESSION_ID`, `NEW_SESSION_NAME`, and `NEW_SESSION_PATH` for use in later steps.
 
 #### Bash
 
@@ -42,149 +57,12 @@ fi
 NEW_SESSION_ID=$("$PYTHON_BIN" -c 'import uuid; print(uuid.uuid4())')
 NEW_SESSION="$STATE_DIR/$NEW_SESSION_ID"
 
-"$PYTHON_BIN" - "$CURRENT_SESSION" "$NEW_SESSION" "$CURRENT_SESSION_ID" "$NEW_SESSION_ID" <<'PY'
-import datetime as dt
-import json
-import shutil
-import sys
-from pathlib import Path
-
-current_session = Path(sys.argv[1])
-new_session = Path(sys.argv[2])
-current_session_id = sys.argv[3]
-new_session_id = sys.argv[4]
-
-workspace_path = current_session / "workspace.yaml"
-if not workspace_path.exists():
-    raise SystemExit(f"Missing workspace metadata: {workspace_path}")
-if new_session.exists():
-    raise SystemExit(f"Branch destination already exists: {new_session}")
-
-
-def parse_scalar(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value[1:-1]
-    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
-        return value[1:-1].replace("''", "'")
-    return value
-
-
-def read_top_level_fields(path):
-    fields = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith(" ") and ":" in line:
-            key, value = line.split(":", 1)
-            fields[key] = parse_scalar(value)
-    return fields
-
-
-def yaml_string(value):
-    return json.dumps(value, ensure_ascii=True)
-
-
-def compact(value, max_len=72):
-    value = " ".join((value or "").split())
-    if len(value) <= max_len:
-        return value
-    return value[: max_len - 3].rstrip() + "..."
-
-
-def set_top_level(lines, key, value):
-    prefix = f"{key}:"
-    for index, line in enumerate(lines):
-        if line.startswith(prefix):
-            lines[index] = f"{key}: {value}"
-            return
-    lines.append(f"{key}: {value}")
-
-
-current_fields = read_top_level_fields(workspace_path)
-base_title = (
-    current_fields.get("name")
-    or current_fields.get("summary")
-    or f"Session {current_session_id[:8]}"
-)
-branch_title = f"Branch: {compact(base_title)} [{new_session_id[:8]}]"
-now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-# Copy the session, then rewrite identity and title metadata in the branch.
-shutil.copytree(current_session, new_session)
-
-new_workspace_path = new_session / "workspace.yaml"
-workspace_lines = new_workspace_path.read_text(encoding="utf-8").splitlines()
-set_top_level(workspace_lines, "id", new_session_id)
-set_top_level(workspace_lines, "name", yaml_string(branch_title))
-set_top_level(workspace_lines, "user_named", "true")
-set_top_level(workspace_lines, "summary", yaml_string(branch_title))
-set_top_level(workspace_lines, "created_at", now)
-set_top_level(workspace_lines, "updated_at", now)
-set_top_level(workspace_lines, "branch_of", current_session_id)
-set_top_level(
-    workspace_lines,
-    "branch_note",
-    yaml_string(f"Branched from: {base_title} ({current_session_id})"),
-)
-new_workspace_path.write_text("\n".join(workspace_lines) + "\n", encoding="utf-8")
-
-# Fix session.start event metadata to reference the new session ID.
-events_path = new_session / "events.jsonl"
-if events_path.exists():
-    rewritten_events = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        event = json.loads(line)
-        if event.get("type") == "session.start":
-            data = event.setdefault("data", {})
-            data["sessionId"] = new_session_id
-            if "alreadyInUse" in data:
-                data["alreadyInUse"] = False
-            for key in ("name", "title", "summary"):
-                if key in data:
-                    data[key] = branch_title
-        rewritten_events.append(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
-    events_path.write_text("\n".join(rewritten_events) + "\n", encoding="utf-8")
-
-# Reset rewind snapshots (they reference old event state).
-rewind_dir = new_session / "rewind-snapshots"
-rewind_dir.mkdir(exist_ok=True)
-(rewind_dir / "index.json").write_text(
-    '{"version":1,"snapshots":[],"filePathMap":{}}\n',
-    encoding="utf-8",
-)
-backup_dir = rewind_dir / "backups"
-if backup_dir.exists():
-    for child in backup_dir.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-# Reset per-session database and stale in-use locks.
-for path in [new_session / "session.db", *new_session.glob("inuse.*.lock")]:
-    if path.exists():
-        path.unlink()
-
-# Reset checkpoints.
-checkpoint_dir = new_session / "checkpoints"
-checkpoint_dir.mkdir(exist_ok=True)
-(checkpoint_dir / "index.md").write_text(
-    "# Checkpoint History\n\n"
-    "Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.\n\n"
-    "| # | Title | File |\n"
-    "|---|-------|------|\n",
-    encoding="utf-8",
-)
-
-print(f"NEW_SESSION_ID={new_session_id}")
-print(f"NEW_SESSION_NAME={branch_title}")
-print(f"NEW_SESSION_PATH={new_session}")
-PY
+# $SKILL_DIR is the directory containing this SKILL.md.
+"$PYTHON_BIN" "$SKILL_DIR/scripts/branch_session.py" \
+  "$CURRENT_SESSION" "$NEW_SESSION" "$CURRENT_SESSION_ID" "$NEW_SESSION_ID"
 ```
+
+The script prints three `KEY=value` lines (`NEW_SESSION_ID`, `NEW_SESSION_NAME`, `NEW_SESSION_PATH`) on stdout. Capture them with a small loop or `eval` if you need them as shell variables.
 
 #### PowerShell
 
@@ -198,156 +76,24 @@ $NEW_SESSION_ID = [guid]::NewGuid().ToString()
 $NEW_SESSION = Join-Path $STATE_DIR $NEW_SESSION_ID
 
 $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $pythonCommand) {
-    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-}
-if (-not $pythonCommand) {
-    throw "Python 3 is required to branch a session."
-}
+if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
+if (-not $pythonCommand) { throw "Python 3 is required to branch a session." }
 $PYTHON_BIN = $pythonCommand.Source
 
-$branchScript = @'
-import datetime as dt
-import json
-import shutil
-import sys
-from pathlib import Path
+# $SKILL_DIR is the directory containing this SKILL.md.
+$branchOutput = & $PYTHON_BIN (Join-Path $SKILL_DIR "scripts\branch_session.py") `
+    $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
 
-current_session = Path(sys.argv[1])
-new_session = Path(sys.argv[2])
-current_session_id = sys.argv[3]
-new_session_id = sys.argv[4]
-
-workspace_path = current_session / "workspace.yaml"
-if not workspace_path.exists():
-    raise SystemExit(f"Missing workspace metadata: {workspace_path}")
-if new_session.exists():
-    raise SystemExit(f"Branch destination already exists: {new_session}")
-
-
-def parse_scalar(value):
-    value = value.strip()
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return value[1:-1]
-    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
-        return value[1:-1].replace("''", "'")
-    return value
-
-
-def read_top_level_fields(path):
-    fields = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line and not line.startswith(" ") and ":" in line:
-            key, value = line.split(":", 1)
-            fields[key] = parse_scalar(value)
-    return fields
-
-
-def yaml_string(value):
-    return json.dumps(value, ensure_ascii=True)
-
-
-def compact(value, max_len=72):
-    value = " ".join((value or "").split())
-    if len(value) <= max_len:
-        return value
-    return value[: max_len - 3].rstrip() + "..."
-
-
-def set_top_level(lines, key, value):
-    prefix = f"{key}:"
-    for index, line in enumerate(lines):
-        if line.startswith(prefix):
-            lines[index] = f"{key}: {value}"
-            return
-    lines.append(f"{key}: {value}")
-
-
-current_fields = read_top_level_fields(workspace_path)
-base_title = (
-    current_fields.get("name")
-    or current_fields.get("summary")
-    or f"Session {current_session_id[:8]}"
-)
-branch_title = f"Branch: {compact(base_title)} [{new_session_id[:8]}]"
-now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-shutil.copytree(current_session, new_session)
-
-new_workspace_path = new_session / "workspace.yaml"
-workspace_lines = new_workspace_path.read_text(encoding="utf-8").splitlines()
-set_top_level(workspace_lines, "id", new_session_id)
-set_top_level(workspace_lines, "name", yaml_string(branch_title))
-set_top_level(workspace_lines, "user_named", "true")
-set_top_level(workspace_lines, "summary", yaml_string(branch_title))
-set_top_level(workspace_lines, "created_at", now)
-set_top_level(workspace_lines, "updated_at", now)
-set_top_level(workspace_lines, "branch_of", current_session_id)
-set_top_level(
-    workspace_lines,
-    "branch_note",
-    yaml_string(f"Branched from: {base_title} ({current_session_id})"),
-)
-new_workspace_path.write_text("\n".join(workspace_lines) + "\n", encoding="utf-8")
-
-events_path = new_session / "events.jsonl"
-if events_path.exists():
-    rewritten_events = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        event = json.loads(line)
-        if event.get("type") == "session.start":
-            data = event.setdefault("data", {})
-            data["sessionId"] = new_session_id
-            if "alreadyInUse" in data:
-                data["alreadyInUse"] = False
-            for key in ("name", "title", "summary"):
-                if key in data:
-                    data[key] = branch_title
-        rewritten_events.append(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
-    events_path.write_text("\n".join(rewritten_events) + "\n", encoding="utf-8")
-
-rewind_dir = new_session / "rewind-snapshots"
-rewind_dir.mkdir(exist_ok=True)
-(rewind_dir / "index.json").write_text(
-    '{"version":1,"snapshots":[],"filePathMap":{}}\n',
-    encoding="utf-8",
-)
-backup_dir = rewind_dir / "backups"
-if backup_dir.exists():
-    for child in backup_dir.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-for path in [new_session / "session.db", *new_session.glob("inuse.*.lock")]:
-    if path.exists():
-        path.unlink()
-
-checkpoint_dir = new_session / "checkpoints"
-checkpoint_dir.mkdir(exist_ok=True)
-(checkpoint_dir / "index.md").write_text(
-    "# Checkpoint History\n\n"
-    "Checkpoints are listed in chronological order. Checkpoint 1 is the oldest, higher numbers are more recent.\n\n"
-    "| # | Title | File |\n"
-    "|---|-------|------|\n",
-    encoding="utf-8",
-)
-
-print(f"NEW_SESSION_ID={new_session_id}")
-print(f"NEW_SESSION_NAME={branch_title}")
-print(f"NEW_SESSION_PATH={new_session}")
-'@
-
-$branchScript | & $PYTHON_BIN - $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
+$branchValues = @{}
+foreach ($line in $branchOutput) {
+    if ($line -match '^([A-Z_]+)=(.*)$') {
+        $branchValues[$Matches[1]] = $Matches[2]
+    }
+}
+$NEW_SESSION_NAME = $branchValues['NEW_SESSION_NAME']
+$NEW_SESSION_PATH = $branchValues['NEW_SESSION_PATH']
+# $NEW_SESSION_ID was generated locally above; keep using that variable.
 ```
-
-Use the printed `NEW_SESSION_ID`, `NEW_SESSION_NAME`, and `NEW_SESSION_PATH` values in the success message.
 
 ### 3. Report Success
 
@@ -429,71 +175,82 @@ Get-ChildItem (Join-Path $HOME ".copilot\session-state\*\workspace.yaml") | ForE
 }
 ```
 
-### 4. Truncation (Only If Requested)
+### 4. Launch in Terminal (Optional)
 
-If user says "branch from N turns ago", truncate events.jsonl to remove the last N turns:
+Only run this step if the user explicitly asked to launch the branched session in a terminal (e.g., "branch and launch in terminal", "launch in terminal", "open in a new tab"). When this mode is requested, **replace** the standard "Report Success" output with a minimal launch announcement (no resume commands, no branch listing snippets, no worktree resume hints).
+
+**Platform**: Windows-only. The launch helper depends on Windows Terminal (`wt.exe`) and the [`launch-copilot-terminal`](../launch-copilot-terminal/SKILL.md) skill. On Bash/macOS/Linux, do **not** attempt the launch — fall back to the standard "Report Success" output and tell the user that launch-in-terminal is currently Windows-only.
+
+**Ordering**: If the user also asked to truncate (e.g., "branch from N turns ago and launch in terminal"), perform Step 5 (Truncation) **before** running this step, so the resumed session loads the truncated state.
+
+#### Run the wrapper
+
+```powershell
+# $SKILL_DIR is the directory containing this SKILL.md.
+# $WORKTREE_DIR is set only if the Worktree Branching section ran.
+# $LAUNCH_COLOR is "purple" by default; override if the user specified one.
+
+$launchArgs = @{
+    CurrentSession = $CURRENT_SESSION
+    NewSessionId   = $NEW_SESSION_ID
+    NewSessionName = $NEW_SESSION_NAME
+}
+if ($WORKTREE_DIR)  { $launchArgs.WorktreeDir = $WORKTREE_DIR }
+if ($LAUNCH_COLOR)  { $launchArgs.Color       = $LAUNCH_COLOR }
+
+& (Join-Path $SKILL_DIR "scripts\Launch-BranchedSession.ps1") @launchArgs
+$launchExit = $LASTEXITCODE
+```
+
+`Launch-BranchedSession.ps1` handles the full flow: locates the `launch-copilot-terminal` helper (sibling skill dir, default plugin install path, or recursive fallback under `~/.copilot`); detects parent CLI flags (`--yolo`, `--allow-all`, `--alt-screen`, `--model …`) and forwards them on resume; resolves the working directory (worktree dir, original session `cwd:`, or current location as last resort); calls the helper with `-Resume <new-id> -Window current`; and emits the minimal launch-announcement message on success.
+
+The wrapper resumes by **session ID** (not name) to avoid name collisions, and uses `-Window current` (`wt -w 0`) so the new tab lands beside the current Copilot session.
+
+#### On failure, fall back
+
+The wrapper exits non-zero (`2` = non-Windows, `3` = helper not found, `4` = helper invocation failed, plus any error from `Launch-CopilotTerminal.ps1` itself) and writes a warning. When `$launchExit -ne 0`, fall back to the standard Step 3 "Report Success" output so the user still gets working resume instructions.
+
+```powershell
+if ($launchExit -ne 0) {
+    # Emit the standard Step 3 report-success block.
+}
+```
+
+#### Minimal success message (when launch succeeds)
+
+The wrapper prints these two lines on success; do not duplicate them. Do not echo any resume commands, branch listing instructions, or worktree resume hints in this mode.
+
+```
+OK Branched session: <NEW_SESSION_ID>
+-> Launching it in a new Windows Terminal tab in this window...
+```
+
+### 5. Truncation (Only If Requested)
+
+If the user says "branch from N turns ago", invoke `scripts/truncate_session.py` against the branched session to remove the last N user turns from `events.jsonl`. Run this **before** Step 4 if launch-in-terminal was also requested.
 
 #### Bash
 
 ```bash
-"$PYTHON_BIN" -c "
-import json, sys
-
-turns_back = int(sys.argv[1])
-lines = open('$NEW_SESSION/events.jsonl').readlines()
-events = [json.loads(l.strip()) for l in lines]
-
-# Find user.message events (each = 1 turn)
-user_msgs = [(i, e) for i, e in enumerate(events) if e['type'] == 'user.message']
-if turns_back >= len(user_msgs):
-    print('Error: only', len(user_msgs), 'turns exist')
-    sys.exit(1)
-
-# Cut at the Nth-from-last user message
-cut_idx = user_msgs[-turns_back][0]
-events = events[:cut_idx]
-
-with open('$NEW_SESSION/events.jsonl', 'w') as f:
-    for e in events:
-        f.write(json.dumps(e, separators=(',', ':')) + '\n')
-print(f'Truncated to {len(events)} events (removed last {turns_back} turns)')
-" N
+# $SKILL_DIR is the directory containing this SKILL.md.
+"$PYTHON_BIN" "$SKILL_DIR/scripts/truncate_session.py" "$NEW_SESSION" N
 ```
 
 #### PowerShell
 
 ```powershell
-$truncateScript = @'
-import json
-import sys
-from pathlib import Path
-
-turns_back = int(sys.argv[1])
-session_dir = Path(sys.argv[2])
-events_file = session_dir / "events.jsonl"
-
-events = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-user_msgs = [(index, event) for index, event in enumerate(events) if event.get("type") == "user.message"]
-if turns_back >= len(user_msgs):
-    print(f"Error: only {len(user_msgs)} turns exist")
-    sys.exit(1)
-
-cut_idx = user_msgs[-turns_back][0]
-events = events[:cut_idx]
-events_file.write_text(
-    "".join(json.dumps(event, separators=(",", ":")) + "\n" for event in events),
-    encoding="utf-8",
-)
-print(f"Truncated to {len(events)} events (removed last {turns_back} turns)")
-'@
-
-$truncateScript | & $PYTHON_BIN - N $NEW_SESSION
+# $SKILL_DIR is the directory containing this SKILL.md.
+& $PYTHON_BIN (Join-Path $SKILL_DIR "scripts\truncate_session.py") $NEW_SESSION N
 ```
+
+The script counts `user.message` events as turns and exits non-zero if `N` exceeds the number of available turns.
 
 ## Notes
 
 - Both sessions are fully independent after branching
 - The original session is never modified
+- The branch operation is **atomic**: contents are staged in `<state_dir>/.tmp-branch-<uuid>` and only renamed to the final destination after the YAML rewrite and validation succeed. On any failure the staging dir is removed, so the state directory never contains a half-branched session.
+- The `workspace.yaml` rewriter is **YAML-aware**: source names written as block scalars (`name: \|-`, `name: >`, etc.) are correctly read as their reconstructed text content (not as the literal `\|-` indicator) and their block bodies are fully replaced (not left orphaned beside the new `name:` line).
 - Rewind/checkpoint history starts fresh in the branch
 - Session database (session.db) is removed in the branch to avoid stale references
 - Stale `inuse.*.lock` files are removed from the branch so it does not inherit the original session's in-use marker
@@ -501,6 +258,7 @@ $truncateScript | & $PYTHON_BIN - N $NEW_SESSION
 - `user_named: true` keeps Copilot from replacing the branch title with the same auto-generated title as the original session
 - `summary` is updated for older picker/search surfaces, but it may still be regenerated later and should not be the only branch identifier
 - `branch_of` and `branch_note` fields in workspace.yaml track lineage (copilot preserves these custom fields)
+- The rewriter refuses to rewrite a `workspace.yaml` that has duplicate top-level keys, so a corrupted source session cannot produce a doubly-corrupted branch.
 
 ## Worktree Branching (Optional)
 
