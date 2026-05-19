@@ -68,7 +68,7 @@ Branch the current Copilot CLI session, creating a new session that inherits con
 - Optional "launch in terminal" mode (Windows-only) opens the branched session in a new Windows Terminal tab inside the current window via the [`launch-copilot-terminal`](#launch-copilot-terminal) helper
 - Optional truncation ("branch from N turns ago") and optional git worktree integration
 
-**Requirements:** Python 3. The launch-in-terminal mode additionally requires Windows, Windows Terminal (`wt.exe`), and the `launch-copilot-terminal` skill.
+**Requirements:** Python 3. On Windows, the skill validates Python candidates and prefers the Python launcher (`py -3`) or a real `python.exe` before falling back to `python3`, avoiding unusable Windows Store app-execution aliases. The launch-in-terminal mode additionally requires Windows, Windows Terminal (`wt.exe`), and the `launch-copilot-terminal` skill.
 
 ### odt-convert
 
