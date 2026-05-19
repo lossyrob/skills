@@ -44,11 +44,11 @@ Repeatedly run a check command or script on a configurable interval until a cond
 **Trigger phrases:** "loop", "wait until", "poll", "watch", "retry", "check every N minutes", "wait for CI", "wait for approval"
 
 **Features:**
-- Cross-platform runners for Bash (`scripts/loop.sh`) and PowerShell (`scripts/loop.ps1`)
+- Cross-platform runners for Bash (`scripts/loop.sh`) and PowerShell, where agent workflows default to detached `Start-LoopDetached.ps1` with attached `loop.ps1` reserved for short-lived/debug cases
 - Fixed interval, timeout, max tries, exponential backoff, jitter, and stability windows
 - Retry-vs-stop exit-code routing so the agent can fix actionable states and restart the loop
 - Optional success action, acknowledgement command, retry hook, singleton lock, quiet mode, and dry-run output
-- PowerShell persistent state files (`last-result.json`, `heartbeat.json`, immutable event files) plus detached launch/status helpers with PID start-time validation for long-running agent coordination without relying on attached PTY output
+- PowerShell persistent state files (`last-result.json`, `heartbeat.json`, immutable event files) plus detached launch/status helpers with PID start-time validation for durable agent coordination without relying on attached PTY output
 - GitHub PR readiness helpers for approval, checks, merge conflicts, closed PRs, and merge race protection
 
 **Requirements:** Bash for macOS/Linux/Git Bash workflows or PowerShell 5.1+/7+. GitHub PR polling requires `gh`.
