@@ -27,6 +27,9 @@ Both runners repeatedly execute a check command until the command succeeds, the 
 | Stop codes | `--stop-exit-codes 20,21` | `-StopExitCode 20,21` | `126,127` |
 | Singleton lock | `--lock-name NAME` | `-LockName NAME` | none |
 | Log file | n/a | `-LogPath PATH` | none |
+| Latest result file | n/a | `-LastResultPath PATH` | none |
+| Heartbeat file | n/a | `-HeartbeatPath PATH` | none |
+| Event directory | n/a | `-EventDir DIR` | none |
 | Dry run | `--dry-run` | `-DryRun` | off |
 | Quiet | `--quiet` | `-Quiet` | off |
 
@@ -193,6 +196,89 @@ Example:
 ```bash
 scripts/loop.sh --check 'test "$LOOP_ATTEMPT" -ge 3' --interval 1 --timeout 10
 ```
+
+## PowerShell persistent state files
+
+`loop.ps1` can write deterministic state files after each attempt. This is the recommended observation mechanism for long-running agent workflows because it does not depend on Copilot consuming an attached PTY/stdout stream.
+
+```powershell
+.\scripts\loop.ps1 `
+  -CheckCommand ".\check-work.ps1 -Mode Peek" `
+  -RetryExitCode 10 `
+  -StopExitCode 31 `
+  -IntervalSeconds 60 `
+  -LastResultPath ".loop\last-result.json" `
+  -HeartbeatPath ".loop\heartbeat.json" `
+  -EventDir ".loop\events" `
+  -Quiet
+```
+
+`last-result.json` is overwritten atomically after each check attempt. Its schema includes:
+
+```json
+{
+  "schemaVersion": 1,
+  "timestamp": "2026-05-19T06:34:05.195Z",
+  "pid": 61392,
+  "attempt": 1,
+  "elapsedSeconds": 0,
+  "remainingSeconds": 30,
+  "checkExitCode": 10,
+  "loopStatus": "retry",
+  "status": "WAIT",
+  "event": "retryable_exit",
+  "stdout": "{...}",
+  "stderr": "",
+  "nextSleepSeconds": 60,
+  "nextAttemptAfter": "2026-05-19T06:35:05.195Z",
+  "terminal": false
+}
+```
+
+If the check command prints a JSON object with `status` or `event`, those values are copied into the latest-result file. Terminal states (`success`, actionable stop codes, fatal errors, timeout/max-tries, action/ack failures, and crashes) also write immutable event files under `EventDir` so an agent can recover missed terminal output.
+
+## Detached PowerShell loops
+
+For multi-hour Windows workflows, prefer `Start-LoopDetached.ps1` over launching `loop.ps1` in an attached Copilot async terminal. Detached mode redirects stdout/stderr to log files and observes progress through state files:
+
+```powershell
+$manifest = .\scripts\Start-LoopDetached.ps1 `
+  -Name "review-watch" `
+  -CheckCommand ".\check-review.ps1 -Repo owner/repo -PullRequest 123" `
+  -RetryExitCode 10 `
+  -StopExitCode 31 `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 43200 | ConvertFrom-Json
+```
+
+The run directory contains:
+
+| File | Purpose |
+|---|---|
+| `manifest.json` | Process ID, command, and all important paths. |
+| `params.json` | Full loop parameter set. Complex check/action strings are passed through this file, not through `Start-Process` command-line quoting. |
+| `loop.pid` | Loop process ID. |
+| `stdout.log` / `stderr.log` | Redirected terminal output. |
+| `last-result.json` | Latest structured check result. |
+| `heartbeat.json` | Latest heartbeat (`checking`, `sleeping`, `action`, etc.). |
+| `events\*.json` | Immutable terminal/actionable events. |
+
+Inspect the run with:
+
+```powershell
+.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
+```
+
+`Get-LoopStatus.ps1` checks both PID liveness and heartbeat freshness. It reports:
+
+| Classification | Meaning |
+|---|---|
+| `starting` | PID exists but no heartbeat has been written yet. |
+| `running` | PID exists and heartbeat is fresh. |
+| `stalled` | PID exists but heartbeat is older than `2 * IntervalSeconds + GraceSeconds`; the check may be hung or unusually slow. |
+| `actionable` | Latest immutable event is an actionable stop-code event. |
+| `final` | Latest immutable event is terminal (success, timeout, fatal, etc.). |
+| `crashed` | PID is gone and no terminal event was written. |
 
 ## Safety notes
 
