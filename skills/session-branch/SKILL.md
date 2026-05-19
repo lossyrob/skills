@@ -49,7 +49,22 @@ set -euo pipefail
 CURRENT_SESSION_ID="<current-session-id>"
 STATE_DIR="$HOME/.copilot/session-state"
 CURRENT_SESSION="$STATE_DIR/$CURRENT_SESSION_ID"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)}"
+
+find_python3() {
+  if [ -n "${PYTHON_BIN:-}" ] && "$PYTHON_BIN" -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' >/dev/null 2>&1; then
+    printf '%s\n' "$PYTHON_BIN"
+    return 0
+  fi
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON_BIN="$(find_python3 || true)"
 if [ -z "$PYTHON_BIN" ]; then
   echo "Python 3 is required to branch a session" >&2
   exit 1
@@ -72,16 +87,37 @@ $ErrorActionPreference = "Stop"
 $CURRENT_SESSION_ID = "<current-session-id>"
 $STATE_DIR = Join-Path $HOME ".copilot\session-state"
 $CURRENT_SESSION = Join-Path $STATE_DIR $CURRENT_SESSION_ID
-$NEW_SESSION_ID = [guid]::NewGuid().ToString()
+
+function Resolve-Python3 {
+    $candidates = @(
+        @{ Command = "py"; Args = @("-3") },
+        @{ Command = "python"; Args = @() },
+        @{ Command = "python3"; Args = @() }
+    )
+    foreach ($candidate in $candidates) {
+        $command = Get-Command $candidate.Command -ErrorAction SilentlyContinue
+        if (-not $command) { continue }
+        $args = @($candidate.Args)
+        $probe = & $command.Source @args -c "import sys; print(sys.version_info[0]); print(sys.executable)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $probe.Count -ge 1 -and $probe[0] -eq "3") {
+            return [pscustomobject]@{
+                Source = $command.Source
+                Args = $args
+                Executable = if ($probe.Count -ge 2) { $probe[1] } else { $command.Source }
+            }
+        }
+    }
+    throw "Python 3 is required to branch a session. Install Python 3 or the Python launcher, and disable unusable Windows Store python/python3 aliases if they are first on PATH."
+}
+
+$python = Resolve-Python3
+$PYTHON_BIN = $python.Source
+$PYTHON_ARGS = @($python.Args)
+$NEW_SESSION_ID = (& $PYTHON_BIN @PYTHON_ARGS -c "import uuid; print(uuid.uuid4())").Trim()
 $NEW_SESSION = Join-Path $STATE_DIR $NEW_SESSION_ID
 
-$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $pythonCommand) { throw "Python 3 is required to branch a session." }
-$PYTHON_BIN = $pythonCommand.Source
-
 # $SKILL_DIR is the directory containing this SKILL.md.
-$branchOutput = & $PYTHON_BIN (Join-Path $SKILL_DIR "scripts\branch_session.py") `
+$branchOutput = & $PYTHON_BIN @PYTHON_ARGS (Join-Path $SKILL_DIR "scripts\branch_session.py") `
     $CURRENT_SESSION $NEW_SESSION $CURRENT_SESSION_ID $NEW_SESSION_ID
 
 $branchValues = @{}
@@ -240,7 +276,7 @@ If the user says "branch from N turns ago", invoke `scripts/truncate_session.py`
 
 ```powershell
 # $SKILL_DIR is the directory containing this SKILL.md.
-& $PYTHON_BIN (Join-Path $SKILL_DIR "scripts\truncate_session.py") $NEW_SESSION N
+& $PYTHON_BIN @PYTHON_ARGS (Join-Path $SKILL_DIR "scripts\truncate_session.py") $NEW_SESSION N
 ```
 
 The script counts `user.message` events as turns and exits non-zero if `N` exceeds the number of available turns.
