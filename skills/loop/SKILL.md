@@ -60,6 +60,7 @@ Use the runner that matches the active shell:
 |---|---|
 | macOS, Linux, Git Bash, WSL | `scripts/loop.sh` |
 | Windows PowerShell 5.1 or PowerShell 7+ | `scripts/loop.ps1` |
+| Long-running Windows agent coordination | `scripts/Start-LoopDetached.ps1` plus `scripts/Get-LoopStatus.ps1` |
 
 ## Core contract
 
@@ -101,8 +102,29 @@ scripts/loop.sh --check "<command>" \
   [-StopExitCode 11,20,21,22,23,24] `
   [-OnRetryCommand "<command>"] `
   [-LockName "<name>"] `
+  [-LastResultPath ".loop\last-result.json"] `
+  [-HeartbeatPath ".loop\heartbeat.json"] `
+  [-EventDir ".loop\events"] `
   [-Quiet] `
   [-DryRun]
+```
+
+For long-running PowerShell loops that an agent will monitor over time, prefer detached mode so Copilot does not have to consume a long-lived PTY/stdout stream:
+
+```powershell
+.\scripts\Start-LoopDetached.ps1 `
+  -Name "pr-review-watch" `
+  -CheckCommand "<command>" `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 43200 `
+  -RetryExitCode 10 `
+  -StopExitCode 23
+```
+
+The detached launcher writes a run directory containing `manifest.json`, `loop.pid`, `stdout.log`, `stderr.log`, `last-result.json`, `heartbeat.json`, and immutable event files under `events\`. Check it with:
+
+```powershell
+.\scripts\Get-LoopStatus.ps1 -RunDir "<run-dir>"
 ```
 
 ## Exit codes
@@ -155,7 +177,7 @@ Action, ack, and on-retry commands additionally receive:
    - Ack advances the marker only after the agent or action succeeds.
 5. For agent-reasoned stateful checks, create todos that include the exact ack command and whether to restart or finish after ack.
 6. Run a dry run.
-7. Start the loop.
+7. Start the loop. For long-running Windows loops, use `Start-LoopDetached.ps1` and observe `last-result.json` / `Get-LoopStatus.ps1` instead of relying on attached terminal output.
 8. If the loop exits with an actionable code and no action is configured, handle the work, validate it, explicitly ack any stateful marker, then restart only if this is a watch-until-terminal loop.
 9. If the loop exits `0`, continue with the requested success action or final report.
 
@@ -279,6 +301,24 @@ PowerShell:
 ```
 
 If the loop exits with `20` or `21`, inspect the failure, fix CI or conflicts, push, and restart the loop. If it exits `11`, update the branch and restart the loop. If it exits `0`, the action has run.
+
+### Detached PowerShell watch with deterministic state
+
+Use detached mode for multi-hour agent coordination, such as one agent waiting for another agent's PR comment or review. The launcher passes parameters through `params.json`, so complex quoted check commands are not mangled by `Start-Process`.
+
+```powershell
+$manifest = .\scripts\Start-LoopDetached.ps1 `
+  -Name "review-response" `
+  -CheckCommand "pwsh -NoProfile -File .\check-review.ps1 -Repo owner/repo -PullRequest 123" `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 43200 `
+  -RetryExitCode 10 `
+  -StopExitCode 23 | ConvertFrom-Json
+
+.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
+```
+
+Use `last-result.json` as the source of truth for the latest attempt. `Get-LoopStatus.ps1` reports `starting`, `running`, `stalled` (process alive but heartbeat stale), `crashed` (process gone without a terminal event), `actionable`, or `final`.
 
 ## More detail
 
