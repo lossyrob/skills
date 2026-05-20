@@ -117,12 +117,33 @@ function Write-AtomicText {
     $tmp = Join-Path $directory ('.{0}.{1}.tmp' -f $leaf, ([guid]::NewGuid().ToString('N')))
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($tmp, $Text, $utf8NoBom)
-    if (Test-Path -LiteralPath $Path -PathType Leaf) {
-        $backup = Join-Path $directory ('.{0}.{1}.bak' -f $leaf, ([guid]::NewGuid().ToString('N')))
-        [System.IO.File]::Replace($tmp, $Path, $backup)
-        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
-    } else {
-        [System.IO.File]::Move($tmp, $Path)
+    $completed = $false
+    try {
+        for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+                if (Test-Path -LiteralPath $Path -PathType Leaf) {
+                    $backup = Join-Path $directory ('.{0}.{1}.bak' -f $leaf, ([guid]::NewGuid().ToString('N')))
+                    [System.IO.File]::Replace($tmp, $Path, $backup)
+                    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+                } else {
+                    [System.IO.File]::Move($tmp, $Path)
+                }
+                $completed = $true
+                return
+            } catch {
+                if (-not ($_.Exception -is [System.IO.IOException] -or $_.Exception -is [System.UnauthorizedAccessException])) {
+                    throw
+                }
+                if ($attempt -eq 5) {
+                    throw
+                }
+                Start-Sleep -Milliseconds (50 * $attempt)
+            }
+        }
+    } finally {
+        if (-not $completed) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
