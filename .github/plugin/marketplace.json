@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Marketplace for reusable Copilot CLI skills by lossyrob",
-    "version": "0.1.10"
+    "version": "0.1.11"
   },
   "plugins": [
     {
       "name": "lossyrob-skills",
       "description": "Reusable Copilot CLI skills by lossyrob",
-      "version": "0.1.10",
+      "version": "0.1.11",
       "source": ".",
       "author": {
         "name": "Rob Emanuele"
