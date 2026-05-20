@@ -20,6 +20,22 @@ function Add-StatusWarning {
     $script:Warnings += $Message
 }
 
+function Read-TextFileShared {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $stream = [System.IO.FileStream]::new($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    try {
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+        try {
+            return $reader.ReadToEnd()
+        } finally {
+            $reader.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Read-JsonFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -27,7 +43,7 @@ function Read-JsonFile {
     }
     for ($i = 0; $i -lt 3; $i++) {
         try {
-            return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+            return Read-TextFileShared -Path $Path | ConvertFrom-Json
         } catch {
             if ($i -lt 2) {
                 Start-Sleep -Milliseconds 100
@@ -237,7 +253,7 @@ $loopPid = ConvertTo-IntValue -Value (Get-JsonProperty -Object $manifest -Name '
 if ($loopPid -le 0) {
     $pidPath = Join-Path $RunDir 'loop.pid'
     if (Test-Path -LiteralPath $pidPath -PathType Leaf) {
-        $pidText = Get-Content -LiteralPath $pidPath -Raw -Encoding UTF8
+        $pidText = Read-TextFileShared -Path $pidPath
         $loopPid = ConvertTo-IntValue -Value $pidText -Name 'loop.pid' -WarnOnInvalid
     }
 }

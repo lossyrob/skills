@@ -88,12 +88,28 @@ function ConvertTo-PositiveInt {
     return $Default
 }
 
+function Read-TextFileShared {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $stream = [System.IO.FileStream]::new($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    try {
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+        try {
+            return $reader.ReadToEnd()
+        } finally {
+            $reader.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Read-JsonFile {
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return $null
     }
-    return Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    return Read-TextFileShared -Path $Path | ConvertFrom-Json
 }
 
 function Get-StatusResult {
@@ -221,7 +237,11 @@ function Invoke-StatusRead {
             $stdoutText = ConvertTo-PlainText -Items @($outputItems)
             $stderrText = ''
             if (Test-Path -LiteralPath $stderrPath -PathType Leaf) {
-                $stderrText = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+                try {
+                    $stderrText = Read-TextFileShared -Path $stderrPath
+                } catch {
+                    $stderrText = ''
+                }
             }
             if ($null -eq $stderrText) {
                 $stderrText = ''

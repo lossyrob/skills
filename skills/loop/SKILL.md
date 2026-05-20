@@ -24,7 +24,7 @@ Always:
 
 1. Prefer a short, auditable check script over a long inline command.
 2. For PowerShell, default to a detached worker plus `Wait-LoopDetached.ps1` when the agent should wake up and continue. Only call `loop.ps1` attached when you have positive evidence the loop is short-lived or the user explicitly wants live terminal output.
-3. For detached PowerShell loops, explicitly choose observed watch or background handoff. A detached worker by itself does **not** generate Copilot/tool completion notifications.
+3. For detached PowerShell loops, explicitly choose observed watch or background handoff. A detached worker by itself does **not** generate Copilot/tool completion notifications. If the user needs to keep chatting while waiting, background the managed waiter task instead of skipping the waiter.
 4. Run `--dry-run` first for non-trivial or destructive workflows.
 5. Use `--timeout` or `--max-tries` unless the user explicitly asks for an unbounded loop.
 6. Route actionable states through `--stop-exit-codes` so the agent can fix issues before deciding whether to restart or finish.
@@ -118,10 +118,12 @@ Detached workers are durable background processes, not chat/tool-managed async j
 
 | Mode | Use when | Agent obligation |
 |---|---|---|
-| Observed watch | The user asked you to wait, watch, continue when ready, or handle the next event. | Run attached quiet `Wait-LoopDetached.ps1` against the detached run directory. The waiter exits when the durable state is `final`, `actionable`, `crashed`, or persistently `stalled`, which wakes the agent through normal tool completion. |
+| Observed watch | The user asked you to wait, watch, continue when ready, or handle the next event. | Run attached quiet `Wait-LoopDetached.ps1` against the detached run directory. The waiter exits when the durable state is `final`, `actionable`, `crashed`, or persistently `stalled`, which wakes the agent through normal tool completion. If the user needs to interact while waiting, use the CLI's task backgrounding on this waiter rather than abandoning it. |
 | Background handoff | The user explicitly wants the loop left running independently. | Tell the user it is independent, provide the run directory, and provide the exact status command. |
 
 Do not say "I'll continue when it exits" or imply automatic continuation for a detached worker unless `Wait-LoopDetached.ps1` or another observer is actually running.
+
+Backgrounding the waiter task in the host CLI task UI is still an observed watch: the waiter remains tool-managed and should complete when the detached worker needs attention. This differs from background handoff, where no waiter is running and the user must check status manually. Do not wrap `Wait-LoopDetached.ps1` in `Start-Job`, `Start-Process`, `&`, or another shell-side detacher; that removes it from the tool-completion channel and turns the workflow into background handoff.
 
 Use this observed-watch pattern when the agent should wake up:
 
@@ -130,7 +132,7 @@ $manifest = .\scripts\Start-LoopDetached.ps1 -Name "watch-name" -CheckCommand "<
 .\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 10
 ```
 
-`Wait-LoopDetached.ps1` is intentionally quiet while waiting. It emits one final status JSON object, with a `waiter` metadata field, then exits. By default it treats `final`, `actionable`, `crashed`, and three consecutive `stalled` polls as wakeup states. It also has a one-hour attached-wait bound (`-TimeoutSeconds 3600`, alias `-MaxAttachedSeconds`) so a single attached waiter is not trusted forever; pass `-TimeoutSeconds 0` only when the user explicitly wants an unbounded attached wait. Its exit code mirrors the underlying loop outcome where possible: `0` for success, configured actionable stop codes for `actionable`, `124` for loop timeout/max tries, `125` for persistent stall, and `122` if the waiter itself times out before the worker needs attention. On `122`, the detached worker may still be running; inspect the emitted status JSON and usually re-run `Wait-LoopDetached.ps1` against the same run directory if the requested wait/watch should continue. If the detached worker has `-ActionCommand`, the waiter stays attached while action/ack runs and exits `0` only after that automation succeeds.
+`Wait-LoopDetached.ps1` is intentionally quiet while waiting. It emits one final status JSON object, with a `waiter` metadata field, then exits. By default it treats `final`, `actionable`, `crashed`, and three consecutive `stalled` polls as wakeup states. It also has a one-hour attached-wait bound (`-TimeoutSeconds 3600`, alias `-MaxAttachedSeconds`) so a single attached waiter is not trusted forever; pass `-TimeoutSeconds 0` only when the user explicitly wants an unbounded attached wait. Its exit code mirrors the underlying loop outcome where possible: `0` for success, configured actionable stop codes for `actionable`, `124` for loop timeout/max tries, `125` for persistent stall, and `122` if the waiter itself times out before the worker needs attention. On `122`, the detached worker may still be running; inspect the emitted status JSON and usually re-run `Wait-LoopDetached.ps1` against the same run directory if the requested wait/watch should continue. If the detached worker has `-ActionCommand`, the waiter stays attached while action/ack runs and exits `0` only after that automation succeeds. When interactivity matters during a long wait, the waiter command may be backgrounded by the CLI UI; do not replace it with detached-only status handoff unless the user asked to stop automatic wakeups.
 
 For an explicit background handoff, do not start the waiter. The handoff must include:
 
