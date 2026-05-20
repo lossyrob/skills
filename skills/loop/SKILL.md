@@ -23,8 +23,8 @@ This skill intentionally does **not** pre-approve shell tools. Loops can execute
 Always:
 
 1. Prefer a short, auditable check script over a long inline command.
-2. For PowerShell, default to `Start-LoopDetached.ps1`. Only call `loop.ps1` attached when you have positive evidence the loop is short-lived or the user explicitly wants live terminal output.
-3. For detached PowerShell loops, explicitly choose observed watch or background handoff. Detached loops do **not** generate Copilot/tool completion notifications.
+2. For PowerShell, default to a detached worker plus `Wait-LoopDetached.ps1` when the agent should wake up and continue. Only call `loop.ps1` attached when you have positive evidence the loop is short-lived or the user explicitly wants live terminal output.
+3. For detached PowerShell loops, explicitly choose observed watch or background handoff. A detached worker by itself does **not** generate Copilot/tool completion notifications.
 4. Run `--dry-run` first for non-trivial or destructive workflows.
 5. Use `--timeout` or `--max-tries` unless the user explicitly asks for an unbounded loop.
 6. Route actionable states through `--stop-exit-codes` so the agent can fix issues before deciding whether to restart or finish.
@@ -56,12 +56,13 @@ This guardrail is not required for simple stateless waits, such as polling a loc
 
 ## Runner selection
 
-Use the runner that matches the active shell. For PowerShell, detached mode is the default because attached terminal output can become stale from the agent's point of view if the loop lives longer than expected.
+Use the runner that matches the active shell. For PowerShell, detached mode is the default because attached terminal output can become stale from the agent's point of view if the loop lives longer than expected. Pair detached workers with the quiet waiter when the agent should sleep until the loop needs attention.
 
 | Environment | Runner |
 |---|---|
 | macOS, Linux, Git Bash, WSL | `scripts/loop.sh` |
-| Windows PowerShell 5.1 or PowerShell 7+ | `scripts/Start-LoopDetached.ps1` plus `scripts/Get-LoopStatus.ps1` |
+| Windows PowerShell 5.1 or PowerShell 7+ observed watch | `scripts/Start-LoopDetached.ps1` plus attached quiet `scripts/Wait-LoopDetached.ps1` |
+| Windows PowerShell background handoff/status | `scripts/Start-LoopDetached.ps1` plus manual `scripts/Get-LoopStatus.ps1` |
 | Short-lived/debug PowerShell exception | `scripts/loop.ps1` attached, only when quick live output is more important than durable state |
 
 ## Core contract
@@ -113,32 +114,25 @@ Use this path unless the loop is known to be short-lived:
   [-DryRun]
 ```
 
-Detached loops are durable background processes, not chat/tool-managed async jobs. The agent will not receive an automatic completion notification when the detached loop reaches `final` or `actionable`. After starting one, choose exactly one orchestration mode:
+Detached workers are durable background processes, not chat/tool-managed async jobs. A detached worker alone will not notify the agent when it reaches `final` or `actionable`. After starting one, choose exactly one orchestration mode:
 
 | Mode | Use when | Agent obligation |
 |---|---|---|
-| Observed watch | The user asked you to wait, watch, continue when ready, or handle the next event. | Keep running bounded, short `Get-LoopStatus.ps1` checks until classification is `final`, `actionable`, `stalled`, or `crashed`; then handle or report that state. |
+| Observed watch | The user asked you to wait, watch, continue when ready, or handle the next event. | Run attached quiet `Wait-LoopDetached.ps1` against the detached run directory. The waiter exits when the durable state is `final`, `actionable`, `crashed`, or persistently `stalled`, which wakes the agent through normal tool completion. |
 | Background handoff | The user explicitly wants the loop left running independently. | Tell the user it is independent, provide the run directory, and provide the exact status command. |
 
-Do not say "I'll continue when it exits" or imply automatic continuation for a detached loop unless an observer is actually running.
+Do not say "I'll continue when it exits" or imply automatic continuation for a detached worker unless `Wait-LoopDetached.ps1` or another observer is actually running.
 
-Use this bounded observed-watch pattern after starting a detached loop:
+Use this observed-watch pattern when the agent should wake up:
 
 ```powershell
 $manifest = .\scripts\Start-LoopDetached.ps1 -Name "watch-name" -CheckCommand "<command>" | ConvertFrom-Json
-$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
-$status = $null
-
-for ($i = 0; $i -lt 12; $i++) {
-  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
-  if ($status.classification -in $terminalClassifications) { break }
-  Start-Sleep -Seconds 10
-}
-
-$status
+.\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 10
 ```
 
-If `$status.classification` is still `running` or `starting` after the bounded observer batch, run another bounded batch or switch to an explicit background handoff. The handoff must include:
+`Wait-LoopDetached.ps1` is intentionally quiet while waiting. It emits one final status JSON object, with a `waiter` metadata field, then exits. By default it treats `final`, `actionable`, `crashed`, and three consecutive `stalled` polls as wakeup states. It also has a one-hour attached-wait bound (`-TimeoutSeconds 3600`, alias `-MaxAttachedSeconds`) so a single attached waiter is not trusted forever; pass `-TimeoutSeconds 0` only when the user explicitly wants an unbounded attached wait. Its exit code mirrors the underlying loop outcome where possible: `0` for success, configured actionable stop codes for `actionable`, `124` for loop timeout/max tries, `125` for persistent stall, and `122` if the waiter itself times out before the worker needs attention. On `122`, the detached worker may still be running; inspect the emitted status JSON and usually re-run `Wait-LoopDetached.ps1` against the same run directory if the requested wait/watch should continue. If the detached worker has `-ActionCommand`, the waiter stays attached while action/ack runs and exits `0` only after that automation succeeds.
+
+For an explicit background handoff, do not start the waiter. The handoff must include:
 
 ```text
 Run directory: <run-dir>
@@ -181,7 +175,9 @@ Only use attached mode when the loop is expected to complete quickly, the user e
 | `1` | General failure. |
 | `2` | Invalid runner arguments. |
 | `3` | Check command was not found or not executable. |
+| `122` | Waiter timeout before the detached worker reached a wakeup state. |
 | `124` | Timeout or max tries reached. |
+| `125` | Detached waiter detected a persistent stalled state. |
 
 Checks can return domain-specific codes. Use `--stop-exit-codes` / `-StopExitCode` for codes that should stop the loop so the agent can act. For PR checks, use:
 
@@ -223,10 +219,10 @@ Action, ack, and on-retry commands additionally receive:
    - Ack advances the marker only after the agent or action succeeds.
 5. For agent-reasoned stateful checks, create todos that include the exact ack command and whether to restart or finish after ack.
 6. Run a dry run.
-7. Start the loop. For PowerShell, use `Start-LoopDetached.ps1` by default and observe `last-result.json` / `Get-LoopStatus.ps1` instead of relying on attached terminal output. Detached loops do not notify this session when they complete; keep observing with bounded short status checks unless you explicitly hand off the run directory and status command to the user.
+7. Start the loop. For PowerShell, use `Start-LoopDetached.ps1` by default. If the agent should continue when the loop needs attention, immediately run attached quiet `Wait-LoopDetached.ps1` on the returned run directory. Use `Get-LoopStatus.ps1` for manual status checks or explicit background handoff.
 8. If the loop exits with an actionable code, or detached status reports `actionable`, and no action is configured, handle the work, validate it, explicitly ack any stateful marker, then restart only if this is a watch-until-terminal loop.
 9. If the loop exits `0`, or detached status reports a final success, continue with the requested success action or final report.
-10. Before final response after starting a detached loop, confirm that you either observed status through `final`, `actionable`, `stalled`, or `crashed`, or clearly handed off the run directory and exact status command.
+10. Before final response after starting a detached worker, confirm that the waiter completed, another observer is running, or you clearly handed off the run directory and exact status command.
 
 ## Examples
 
@@ -248,14 +244,7 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
   -TimeoutSeconds 120 `
   -StableForSeconds 5 | ConvertFrom-Json
 
-$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
-$status = $null
-for ($i = 0; $i -lt 24; $i++) {
-  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
-  if ($status.classification -in $terminalClassifications) { break }
-  Start-Sleep -Seconds 5
-}
-$status
+.\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 5
 ```
 
 ### Retry a flaky command with backoff
@@ -297,14 +286,7 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
   -IntervalSeconds 60 `
   -TimeoutSeconds 3600 | ConvertFrom-Json
 
-$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
-$status = $null
-for ($i = 0; $i -lt 12; $i++) {
-  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
-  if ($status.classification -in $terminalClassifications) { break }
-  Start-Sleep -Seconds 10
-}
-$status
+.\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 10
 ```
 
 After handling succeeds:
@@ -339,14 +321,7 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
   -IntervalSeconds 60 `
   -TimeoutSeconds 3600 | ConvertFrom-Json
 
-$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
-$status = $null
-for ($i = 0; $i -lt 12; $i++) {
-  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
-  if ($status.classification -in $terminalClassifications) { break }
-  Start-Sleep -Seconds 10
-}
-$status
+.\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 10
 ```
 
 If the action fails, ack does not run and the marker remains unchanged. If ack fails, the loop exits non-zero so the same work can be detected again after the ack problem is fixed.
@@ -377,14 +352,7 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
   -StopExitCode 11,20,21,22,23,24 `
   -ActionCommand "gh pr merge 123 --squash --delete-branch --match-head-commit (gh pr view 123 --json headRefOid --jq .headRefOid)" | ConvertFrom-Json
 
-$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
-$status = $null
-for ($i = 0; $i -lt 12; $i++) {
-  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
-  if ($status.classification -in $terminalClassifications) { break }
-  Start-Sleep -Seconds 30
-}
-$status
+.\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 30
 ```
 
 If the loop exits with `20` or `21`, or detached status reports `actionable` for those stop codes, inspect the failure, fix CI or conflicts, push, and restart the loop. If it exits `11`, update the branch and restart the loop. If it exits `0` or detached status reports final success, the action has run.

@@ -59,17 +59,10 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
   -StopExitCode 11,20,21,22,23,24 `
   -ActionCommand "gh pr merge 123 --squash --delete-branch --match-head-commit (gh pr view 123 --json headRefOid --jq .headRefOid)" | ConvertFrom-Json
 
-$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
-$status = $null
-for ($i = 0; $i -lt 12; $i++) {
-  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
-  if ($status.classification -in $terminalClassifications) { break }
-  Start-Sleep -Seconds 30
-}
-$status
+.\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 30
 ```
 
-Detached PowerShell runs do not notify the agent session when they become actionable or final. Keep running bounded status checks like the observer above, or explicitly hand off `$manifest.runDir` and the exact `Get-LoopStatus.ps1` command to the user.
+Detached PowerShell workers do not notify the agent session by themselves. `Wait-LoopDetached.ps1` is the attached quiet observer that wakes the agent when the PR watch becomes actionable or final. It exits with still-running status after one hour by default so the agent can reattach instead of trusting one attached process forever. For background handoff instead, skip the waiter and give the user `$manifest.runDir` plus the exact `Get-LoopStatus.ps1` command.
 
 ## Decision table
 
