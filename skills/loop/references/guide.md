@@ -1,11 +1,12 @@
 # Loop Runner Guide
 
-The loop skill provides two runners with the same behavior:
+The loop skill provides one Bash runner and a PowerShell runner with a detached launcher:
 
 - `scripts/loop.sh` for Bash-compatible shells.
-- `scripts/loop.ps1` for Windows PowerShell 5.1 and PowerShell 7+.
+- `scripts/Start-LoopDetached.ps1` for default Windows PowerShell 5.1 and PowerShell 7+ use.
+- `scripts/loop.ps1` for the short-lived/debug PowerShell exception.
 
-Both runners repeatedly execute a check command until the command succeeds, the loop times out, the maximum attempt count is reached, or the check returns a configured stop exit code.
+The runners repeatedly execute a check command until the command succeeds, the loop times out, the maximum attempt count is reached, or the check returns a configured stop exit code. In PowerShell, default to detached mode unless you know the loop will be short-lived or the user explicitly wants live terminal output.
 
 ## Core options
 
@@ -26,12 +27,20 @@ Both runners repeatedly execute a check command until the command succeeds, the 
 | Retry codes | `--retry-exit-codes 1,10` | `-RetryExitCode 1,10` | all non-zero except stop codes |
 | Stop codes | `--stop-exit-codes 20,21` | `-StopExitCode 20,21` | `126,127` |
 | Singleton lock | `--lock-name NAME` | `-LockName NAME` | none |
-| Log file | n/a | `-LogPath PATH` | none |
-| Latest result file | n/a | `-LastResultPath PATH` | none |
-| Heartbeat file | n/a | `-HeartbeatPath PATH` | none |
-| Event directory | n/a | `-EventDir DIR` | none |
+| Attached log file (`loop.ps1`) | n/a | `-LogPath PATH` | none |
+| Attached latest result file (`loop.ps1`) | n/a | `-LastResultPath PATH` | none |
+| Attached heartbeat file (`loop.ps1`) | n/a | `-HeartbeatPath PATH` | none |
+| Attached event directory (`loop.ps1`) | n/a | `-EventDir DIR` | none |
 | Dry run | `--dry-run` | `-DryRun` | off |
 | Quiet | `--quiet` | `-Quiet` | off |
+
+`Start-LoopDetached.ps1` accepts the same check, action, timing, and exit-code options as `loop.ps1`, adds detached-run options such as `-Name`, `-RunDir`, and `-Force`, and manages log/state paths automatically inside the run directory.
+
+## PowerShell runner choice
+
+For PowerShell, use `Start-LoopDetached.ps1` by default. Attached `loop.ps1` sessions depend on the agent continuing to consume a live terminal stream; if a loop lives longer than expected, the process can still be running while the agent's view of output is stale or incomplete. Detached runs avoid that by redirecting stdout/stderr to files and exposing structured status through `last-result.json`, `heartbeat.json`, `events\`, and `Get-LoopStatus.ps1`. Detached mode is durable state, not automatic fire-and-forget: for wait/watch requests, keep checking status with repeated short status commands until the requested condition is terminal, actionable, stalled, or crashed unless the user explicitly asked to leave the loop running. Do not wrap status checks in another long-running attached shell loop.
+
+Use attached `loop.ps1` only when you have positive evidence that the loop is short-lived, the user explicitly asked for live terminal output, or you are debugging the check command. If duration is uncertain, detached wins.
 
 ## Exit-code behavior
 
@@ -102,19 +111,22 @@ scripts/loop.sh \
   --timeout 3600
 ```
 
-When the loop exits with `31`, the agent handles `event.json`. After successful handling, ack the marker:
+When the loop exits with `31`, or detached status reports `actionable` for that stop code, the agent handles `event.json`. After successful handling, ack the marker:
 
 ```bash
 ./check-work.sh --marker marker.json --mode ack --event event.json
 ```
 
 ```powershell
-.\scripts\loop.ps1 `
+$manifest = .\scripts\Start-LoopDetached.ps1 `
+  -Name "peek-work" `
   -CheckCommand ".\check-work.ps1 -Marker marker.json -Mode Peek -Out event.json" `
   -RetryExitCode 10 `
   -StopExitCode 31 `
   -IntervalSeconds 60 `
-  -TimeoutSeconds 3600
+  -TimeoutSeconds 3600 | ConvertFrom-Json
+
+.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
 ```
 
 After successful handling:
@@ -137,14 +149,17 @@ scripts/loop.sh \
 ```
 
 ```powershell
-.\scripts\loop.ps1 `
+$manifest = .\scripts\Start-LoopDetached.ps1 `
+  -Name "automation-work" `
   -CheckCommand ".\check-work.ps1 -Marker marker.json -Mode Peek" `
   -RetryExitCode 10 `
   -StopExitCode 31 `
   -ActionCommand ".\handle-work.ps1" `
   -AckCommand ".\check-work.ps1 -Marker marker.json -Mode Ack" `
   -IntervalSeconds 60 `
-  -TimeoutSeconds 3600
+  -TimeoutSeconds 3600 | ConvertFrom-Json
+
+.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
 ```
 
 ## Timing
@@ -197,20 +212,20 @@ Example:
 scripts/loop.sh --check 'test "$LOOP_ATTEMPT" -ge 3' --interval 1 --timeout 10
 ```
 
-## PowerShell persistent state files
+## PowerShell durable state files
 
-`loop.ps1` can write deterministic state files after each attempt. This is the recommended observation mechanism for long-running agent workflows because it does not depend on Copilot consuming an attached PTY/stdout stream.
+Detached PowerShell runs write deterministic state files after each attempt and are the recommended observation mechanism for agent workflows because they do not depend on Copilot consuming an attached PTY/stdout stream. The attached `loop.ps1` runner can also write the same files when explicitly passed state paths, but that should be reserved for short-lived/debug cases.
 
 ```powershell
-.\scripts\loop.ps1 `
+$manifest = .\scripts\Start-LoopDetached.ps1 `
+  -Name "stateful-work" `
   -CheckCommand ".\check-work.ps1 -Mode Peek" `
   -RetryExitCode 10 `
   -StopExitCode 31 `
   -IntervalSeconds 60 `
-  -LastResultPath ".loop\last-result.json" `
-  -HeartbeatPath ".loop\heartbeat.json" `
-  -EventDir ".loop\events" `
-  -Quiet
+  -Quiet | ConvertFrom-Json
+
+.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
 ```
 
 `last-result.json` is overwritten atomically after each check attempt. Its schema includes:
@@ -239,7 +254,7 @@ If the check command prints a JSON object with `status` or `event`, those values
 
 ## Detached PowerShell loops
 
-For multi-hour Windows workflows, prefer `Start-LoopDetached.ps1` over launching `loop.ps1` in an attached Copilot async terminal. Detached mode redirects stdout/stderr to log files and observes progress through state files:
+For PowerShell workflows, default to `Start-LoopDetached.ps1` over launching `loop.ps1` in an attached Copilot async terminal. Detached mode redirects stdout/stderr to log files and observes progress through state files:
 
 ```powershell
 $manifest = .\scripts\Start-LoopDetached.ps1 `
@@ -273,6 +288,8 @@ Inspect the run with:
 
 `Get-LoopStatus.ps1` checks PID liveness, process start time, and heartbeat freshness. Start-time validation prevents a recycled PID from making an old run look alive. Heartbeat freshness uses `heartbeat.nextAttemptAfter` or `heartbeat.nextSleepSeconds` when present, then falls back to `2 * IntervalSeconds + GraceSeconds`.
 
+For wait/watch tasks, keep inspecting status until it reaches the state needed by the user's request. Run status checks as separate short-lived commands; do not create a second long-running attached polling loop around `Get-LoopStatus.ps1`.
+
 | Classification | Meaning |
 |---|---|
 | `starting` | PID exists but no heartbeat has been written yet. |
@@ -287,6 +304,7 @@ Detached run directories are durable scratch state. They may contain command str
 ## Safety notes
 
 - Prefer checked-in helper scripts or temporary scripts over complex inline commands.
+- For PowerShell, default to `Start-LoopDetached.ps1`; use attached `loop.ps1` only for known short-lived or debugging loops.
 - Do not run untrusted command strings.
 - Do not include secrets in check/action command strings or output; `params.json`, `stdout.log`, `stderr.log`, `last-result.json`, and `events\*.json` persist them until the run directory is deleted.
 - Quote inline commands for the shell that will execute them. Prefer helper scripts when quoting becomes hard to audit.

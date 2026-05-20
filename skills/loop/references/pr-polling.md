@@ -50,13 +50,16 @@ scripts/loop.sh \
 PowerShell:
 
 ```powershell
-.\scripts\loop.ps1 `
+$manifest = .\scripts\Start-LoopDetached.ps1 `
+  -Name "pr-123-ready" `
   -CheckCommand ".\scripts\check-pr-ready.ps1 -Pr 123 -RequireReview" `
   -IntervalSeconds 300 `
   -TimeoutSeconds 21600 `
   -RetryExitCode 10 `
   -StopExitCode 11,20,21,22,23,24 `
-  -ActionCommand "gh pr merge 123 --squash --delete-branch --match-head-commit (gh pr view 123 --json headRefOid --jq .headRefOid)"
+  -ActionCommand "gh pr merge 123 --squash --delete-branch --match-head-commit (gh pr view 123 --json headRefOid --jq .headRefOid)" | ConvertFrom-Json
+
+.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
 ```
 
 ## Decision table
