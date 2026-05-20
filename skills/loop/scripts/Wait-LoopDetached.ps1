@@ -7,8 +7,9 @@ param(
     [ValidateRange(1, [int]::MaxValue)]
     [int]$PollIntervalSeconds = 10,
 
+    [Alias('MaxAttachedSeconds')]
     [ValidateRange(0, [int]::MaxValue)]
-    [int]$TimeoutSeconds = 0,
+    [int]$TimeoutSeconds = 3600,
 
     [ValidateRange(0, [int]::MaxValue)]
     [int]$GraceSeconds = 30,

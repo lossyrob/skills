@@ -75,6 +75,8 @@ The default policy is:
 
 When a detached worker has `-ActionCommand`, the waiter does not wake on the initial actionable event while that worker is still alive. It waits for action/ack completion: action success exits `0`, action failure exits the action code, and ack failure exits the ack code.
 
+The waiter timeout is also an attached-session freshness bound. It defaults to one hour (`-TimeoutSeconds 3600`, alias `-MaxAttachedSeconds`) so long waits periodically wake the agent with a still-running status rather than trusting one attached process indefinitely. If the emitted JSON has `waiter.timedOut: true` and the detached status is still `running`, `starting`, or action-in-progress, re-run `Wait-LoopDetached.ps1 -RunDir <run-dir>` to reattach for the next bounded window. Use `-TimeoutSeconds 0` only when the user explicitly wants an unbounded attached wait.
+
 Use retry and stop lists for multi-state checks:
 
 ```bash
@@ -310,7 +312,7 @@ For an observed watch, attach the quiet waiter to the durable run:
 .\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 30
 ```
 
-`Wait-LoopDetached.ps1` emits no progress output. It repeatedly calls `Get-LoopStatus.ps1`, emits one final status JSON object with a `waiter` metadata field, then exits. Its default wakeup states are `final`, `actionable`, `crashed`, and three consecutive `stalled` polls. A one-off `stalled` classification may be a long check attempt; requiring consecutive stalled polls reduces false wakeups while still surfacing a persistently hung worker.
+`Wait-LoopDetached.ps1` emits no progress output. It repeatedly calls `Get-LoopStatus.ps1`, emits one final status JSON object with a `waiter` metadata field, then exits. Its default wakeup states are `final`, `actionable`, `crashed`, three consecutive `stalled` polls, and its one-hour attached-wait timeout. A one-off `stalled` classification may be a long check attempt; requiring consecutive stalled polls reduces false wakeups while still surfacing a persistently hung worker. A waiter timeout does not stop the detached worker.
 
 `Get-LoopStatus.ps1` checks PID liveness, process start time, and heartbeat freshness. Start-time validation prevents a recycled PID from making an old run look alive. Heartbeat freshness uses `heartbeat.nextAttemptAfter` or `heartbeat.nextSleepSeconds` when present, then falls back to `2 * IntervalSeconds + GraceSeconds`.
 
