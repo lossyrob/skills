@@ -415,6 +415,7 @@ function Invoke-ActionAndAck {
         exit $actionResult.ExitCode
     }
 
+    $ackResult = $null
     if ($AckCommand) {
         Write-LoopLog 'action succeeded; running ack'
         Write-LoopHeartbeat -Phase 'ack' -Attempt (Get-LoopAttemptFromEnv)
@@ -440,6 +441,28 @@ function Invoke-ActionAndAck {
             exit $ackResult.ExitCode
         }
     }
+
+    $result = [ordered]@{
+        schemaVersion = 1
+        timestamp = Get-UtcTimestamp
+        pid = $PID
+        attempt = Get-LoopAttemptFromEnv
+        loopStatus = 'action_completed'
+        status = 'SUCCESS'
+        event = 'action_completed'
+        checkExitCode = $CheckExitCode
+        actionExitCode = [int]$actionResult.ExitCode
+        stdout = [string]$actionResult.Stdout
+        stderr = [string]$actionResult.Stderr
+        terminal = $true
+    }
+    if ($AckCommand) {
+        $result.ackExitCode = [int]$ackResult.ExitCode
+        $result.ackStdout = [string]$ackResult.Stdout
+        $result.ackStderr = [string]$ackResult.Stderr
+    }
+    Write-LoopResult -Result $result
+    Write-LoopEvent -Kind 'action_completed' -Result $result
 }
 
 function Test-CodeInList {
