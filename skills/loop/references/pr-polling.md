@@ -59,8 +59,17 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
   -StopExitCode 11,20,21,22,23,24 `
   -ActionCommand "gh pr merge 123 --squash --delete-branch --match-head-commit (gh pr view 123 --json headRefOid --jq .headRefOid)" | ConvertFrom-Json
 
-.\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir
+$terminalClassifications = @('final', 'actionable', 'stalled', 'crashed')
+$status = $null
+for ($i = 0; $i -lt 12; $i++) {
+  $status = .\scripts\Get-LoopStatus.ps1 -RunDir $manifest.runDir | ConvertFrom-Json
+  if ($status.classification -in $terminalClassifications) { break }
+  Start-Sleep -Seconds 30
+}
+$status
 ```
+
+Detached PowerShell runs do not notify the agent session when they become actionable or final. Keep running bounded status checks like the observer above, or explicitly hand off `$manifest.runDir` and the exact `Get-LoopStatus.ps1` command to the user.
 
 ## Decision table
 
