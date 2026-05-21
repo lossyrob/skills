@@ -62,7 +62,7 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
 .\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 30
 ```
 
-Detached PowerShell workers do not notify the agent session by themselves. `Wait-LoopDetached.ps1` is the attached quiet observer that wakes the agent when the PR watch becomes actionable or final. It exits with still-running status after one hour by default so the agent can reattach instead of trusting one attached process forever. If the user needs to keep chatting while a PR watch is waiting, use the host CLI task background option on the waiter task rather than dropping the waiter. For background handoff instead, skip the waiter and give the user `$manifest.runDir` plus the exact `Get-LoopStatus.ps1` command.
+Detached PowerShell workers do not notify the agent session by themselves. `Wait-LoopDetached.ps1` is the attached quiet observer that wakes the agent when the PR watch becomes actionable, final, crashed, or persistently stalled. If the user needs to keep chatting while a PR watch is waiting, use the host CLI task background option on the waiter task rather than dropping the waiter. For background handoff instead, skip the waiter and give the user `$manifest.runDir` plus the exact `Get-LoopStatus.ps1` command.
 
 ## Decision table
 
