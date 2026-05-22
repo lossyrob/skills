@@ -101,6 +101,20 @@ function ConvertTo-PlainText {
     return (($Items | ForEach-Object { [string]$_ }) -join [Environment]::NewLine)
 }
 
+function Test-TransientFileException {
+    param([AllowNull()][Exception]$Exception)
+
+    while ($null -ne $Exception) {
+        if ($Exception -is [System.IO.IOException] -or
+            $Exception -is [System.UnauthorizedAccessException]) {
+            return $true
+        }
+        $Exception = $Exception.InnerException
+    }
+
+    return $false
+}
+
 function Write-AtomicText {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -118,8 +132,9 @@ function Write-AtomicText {
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($tmp, $Text, $utf8NoBom)
     $completed = $false
+    $maxAttempts = 8
     try {
-        for ($attempt = 1; $attempt -le 5; $attempt++) {
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             try {
                 if (Test-Path -LiteralPath $Path -PathType Leaf) {
                     $backup = Join-Path $directory ('.{0}.{1}.bak' -f $leaf, ([guid]::NewGuid().ToString('N')))
@@ -131,13 +146,14 @@ function Write-AtomicText {
                 $completed = $true
                 return
             } catch {
-                if (-not ($_.Exception -is [System.IO.IOException] -or $_.Exception -is [System.UnauthorizedAccessException])) {
+                if (-not (Test-TransientFileException -Exception $_.Exception)) {
                     throw
                 }
-                if ($attempt -eq 5) {
-                    throw
+                if ($attempt -eq $maxAttempts) {
+                    $message = "Failed to atomically write '$Path' after $maxAttempts attempts: $($_.Exception.Message)"
+                    throw [System.IO.IOException]::new($message, $_.Exception)
                 }
-                Start-Sleep -Milliseconds (50 * $attempt)
+                Start-Sleep -Milliseconds (75 * $attempt)
             }
         }
     } finally {
