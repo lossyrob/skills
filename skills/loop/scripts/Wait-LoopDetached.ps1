@@ -9,7 +9,7 @@ param(
 
     [Alias('MaxAttachedSeconds')]
     [ValidateRange(0, [int]::MaxValue)]
-    [int]$TimeoutSeconds = 3600,
+    [int]$TimeoutSeconds = 0,
 
     [ValidateRange(0, [int]::MaxValue)]
     [int]$GraceSeconds = 30,

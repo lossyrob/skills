@@ -18,7 +18,8 @@ The runners repeatedly execute a check command until the command succeeds, the l
 | Acknowledgement | `--ack CMD` | `-AckCommand CMD` | none |
 | Retry hook | `--on-retry CMD` | `-OnRetryCommand CMD` | none |
 | Interval | `--interval N` | `-IntervalSeconds N` | `30` |
-| Timeout | `--timeout N` | `-TimeoutSeconds N` | `3600` |
+| Worker timeout | `--timeout N` | `-TimeoutSeconds N` | `3600` |
+| Waiter timeout | n/a | `Wait-LoopDetached.ps1 -TimeoutSeconds N` / `-MaxAttachedSeconds N` | `0` (unbounded) |
 | Max tries | `--max-tries N` | `-MaxTries N` | `0` (disabled) |
 | Backoff | `--backoff-factor N` | `-BackoffFactor N` | `1` |
 | Max interval | `--max-interval N` | `-MaxIntervalSeconds N` | `300` |
@@ -45,7 +46,7 @@ Detached workers are independent background processes, not Copilot/tool-managed 
 
 | Mode | Use when | Required follow-through |
 |---|---|---|
-| Observed watch | The user asked the agent to wait, watch, continue when ready, or handle the next event. | Run attached quiet `Wait-LoopDetached.ps1` against the run directory. It exits on `final`, `actionable`, `crashed`, or persistent `stalled` status so the agent gets a normal tool completion wakeup. If the user needs to keep interacting while the wait is running, use the CLI's task backgrounding on the waiter task rather than abandoning it. |
+| Observed watch | The user asked the agent to wait, watch, continue when ready, or handle the next event. | Run attached quiet `Wait-LoopDetached.ps1` against the run directory, then background that waiter in the host CLI task UI by default when the user may need to keep interacting. It exits on `final`, `actionable`, `crashed`, or persistent `stalled` status so the agent gets a normal tool completion wakeup. |
 | Background handoff | The user explicitly wants an independent background watch. | Tell the user no automatic notification will occur, provide the run directory, and provide the exact status command. |
 
 Do not say "I'll continue when it exits" for a detached worker unless `Wait-LoopDetached.ps1` or another observer is actually running.
@@ -71,13 +72,13 @@ The default policy is:
 | configured stop code | Detached worker reached `actionable`; the waiter exits with the check's stop code when available. |
 | `1` | Detached worker crashed, action result was missing after an actionable event, or terminal failure had no more specific code. |
 | `3` | Detached worker reported a fatal not-found/not-executable check. |
-| `122` | Waiter timeout expired before the worker reached a wakeup state; the worker may still be running. |
+| `122` | Opt-in waiter timeout expired before the worker reached a wakeup state; only emitted when `Wait-LoopDetached.ps1 -TimeoutSeconds` / `-MaxAttachedSeconds` is greater than `0`. |
 | `124` | Detached worker timed out or hit max tries. |
 | `125` | Waiter saw persistent stalled status. |
 
 When a detached worker has `-ActionCommand`, the waiter does not wake on the initial actionable event while that worker is still alive. It waits for action/ack completion: action success exits `0`, action failure exits the action code, and ack failure exits the ack code.
 
-The waiter timeout is also an attached-session freshness bound. It defaults to one hour (`-TimeoutSeconds 3600`, alias `-MaxAttachedSeconds`) so long waits periodically wake the agent with a still-running status rather than trusting one attached process indefinitely. If the emitted JSON has `waiter.timedOut: true` and the detached status is still `running`, `starting`, or action-in-progress, re-run `Wait-LoopDetached.ps1 -RunDir <run-dir>` to reattach for the next bounded window. Use `-TimeoutSeconds 0` only when the user explicitly wants an unbounded attached wait. If the user needs to continue chatting while the waiter is active, background the waiter task in the CLI; do not convert the workflow to detached-only handoff unless automatic wakeup is no longer desired.
+The waiter has no timeout by default (`-TimeoutSeconds 0`; the legacy `-MaxAttachedSeconds` alias is still supported). If you explicitly pass a waiter timeout and the emitted JSON has `waiter.timedOut: true`, the detached worker may still be running; decide whether to reattach with `Wait-LoopDetached.ps1 -RunDir <run-dir>` or hand off status inspection. If the user needs to continue chatting while the waiter is active, background the waiter task in the host CLI task UI; do not convert the workflow to detached-only handoff unless automatic wakeup is no longer desired.
 
 Use retry and stop lists for multi-state checks:
 
@@ -314,13 +315,15 @@ For an observed watch, attach the quiet waiter to the durable run:
 .\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 30
 ```
 
-`Wait-LoopDetached.ps1` emits no progress output. It repeatedly calls `Get-LoopStatus.ps1`, emits one final status JSON object with a `waiter` metadata field, then exits. Its default wakeup states are `final`, `actionable`, `crashed`, three consecutive `stalled` polls, and its one-hour attached-wait timeout. A one-off `stalled` classification may be a long check attempt; requiring consecutive stalled polls reduces false wakeups while still surfacing a persistently hung worker. A waiter timeout does not stop the detached worker.
+`Wait-LoopDetached.ps1` emits no progress output. It repeatedly calls `Get-LoopStatus.ps1`, emits one final status JSON object with a `waiter` metadata field, then exits. Its default wakeup states are `final`, `actionable`, `crashed`, and three consecutive `stalled` polls. A one-off `stalled` classification may be a long check attempt; requiring consecutive stalled polls reduces false wakeups while still surfacing a persistently hung worker. `waiter.timeoutSeconds: 0` means the waiter is unbounded; if you opt into a waiter timeout, that timeout does not stop the detached worker.
 
 `Get-LoopStatus.ps1` checks PID liveness, process start time, and heartbeat freshness. Start-time validation prevents a recycled PID from making an old run look alive. Heartbeat freshness uses `heartbeat.nextAttemptAfter` or `heartbeat.nextSleepSeconds` when present, then falls back to `2 * IntervalSeconds + GraceSeconds`.
 
 The waiter is disposable and re-attachable. If it is interrupted, run `Wait-LoopDetached.ps1` again with the same `RunDir`; the detached worker keeps running and durable state remains the source of truth.
 
 When a waiting task blocks user interaction, use the CLI task background option on `Wait-LoopDetached.ps1`. The detached worker still owns durability, and the backgrounded waiter still owns the automatic wakeup.
+
+An observed watch's maximum lifetime is normally bounded by the detached worker's own timeout. If you set both the worker timeout and waiter timeout to `0`, the observed watch can run indefinitely until the worker reaches a wakeup classification.
 
 | Classification | Meaning |
 |---|---|

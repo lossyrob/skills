@@ -48,7 +48,7 @@ Repeatedly run a check command or script on a configurable interval until a cond
 - Fixed interval, timeout, max tries, exponential backoff, jitter, and stability windows
 - Retry-vs-stop exit-code routing so the agent can fix actionable states and restart the loop
 - Optional success action, acknowledgement command, retry hook, singleton lock, quiet mode, and dry-run output
-- PowerShell persistent state files (`last-result.json`, `heartbeat.json`, immutable event files) plus detached launch/status/wait helpers with PID start-time validation; the quiet waiter lets the agent sleep until detached state becomes actionable or final and bounds each attached wait to one hour by default
+- PowerShell persistent state files (`last-result.json`, `heartbeat.json`, immutable event files) plus detached launch/status/wait helpers with PID start-time validation; the quiet waiter lets the agent sleep until detached state becomes actionable or final and can be backgrounded in the host CLI while preserving automatic wakeup
 - GitHub PR readiness helpers for approval, checks, merge conflicts, closed PRs, and merge race protection
 
 **Requirements:** Bash for macOS/Linux/Git Bash workflows or PowerShell 5.1+/7+. GitHub PR polling requires `gh`.
