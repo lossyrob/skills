@@ -32,13 +32,10 @@ $result = $raw | ConvertFrom-Json
 $result
 ```
 
-If `$result.waiter.timedOut` is true and `$result.classification` is still `running` or `starting`, run the same `$loopWait` command again as a fresh tool call after observing this JSON. Do not start another detached worker.
-
 Handle events by intent:
 
 | Event | Implementer response |
 |---|---|
-| `waiter.timedOut` with `running` or `starting` | Re-run `$loopWait` against the same `$manifest.runDir`; do not transition modes or start a duplicate worker. |
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |
 | `review_detected` | Address the PR review comments, validate, push, then post a PR comment starting with `🐾 PAW Implementer: Review Addressed` and include the specific review information. Restart Review Response mode. |
 | `approval_detected` | Fetch the latest +1 review body using the emitted `sourceUrl` / `sourceId` (e.g., `gh api` against the review or comment, or `gh pr view <pr-number> --repo <repo> --json reviews,comments`). A +1 may include non-blocking notes (nits, optional suggestions, follow-ups). For each note, decide: address it now (and if the resulting change is substantive, push and post `🐾 PAW Implementer: Re-review Requested` per the section below), or explicitly acknowledge it in the handoff/PR conversation so it is not silently dropped. Then enter PR Sentry mode. |
@@ -67,13 +64,10 @@ $result = $raw | ConvertFrom-Json
 $result
 ```
 
-If `$result.waiter.timedOut` is true and `$result.classification` is still `running` or `starting`, run the same `$loopWait` command again as a fresh tool call after observing this JSON. Do not start another detached worker.
-
 `ready_to_merge` is a steady state. The first ready state for a head SHA exits once so the agent can report it, then the same-head ready state becomes non-terminal after PR Sentry is restarted. Keep the sentry alive so later CI failures, base-branch changes, reviews, or merge conflicts are caught before the developer merges.
 
 | Event | Implementer response |
 |---|---|
-| `waiter.timedOut` with `running` or `starting` | Re-run `$loopWait` against the same `$manifest.runDir`; do not transition modes or start a duplicate worker. |
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |
 | `ready_to_merge` | Report that the PR is currently ready, restart PR Sentry, and do not merge. |
 | `ci_failed`, `merge_conflict`, `changes_requested`, `merge_blocked` | Repair, validate, push, and restart the appropriate sentry. |

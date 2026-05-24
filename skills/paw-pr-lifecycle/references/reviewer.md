@@ -26,11 +26,8 @@ $result
 
 If the issue has base-branch guidance, include `-BaseBranch <base-branch>` in the check command.
 
-If `$result.waiter.timedOut` is true and `$result.classification` is still `running` or `starting`, run the same `$loopWait` command again as a fresh tool call after observing this JSON. Do not start another detached worker.
-
 | Event | Reviewer response |
 |---|---|
-| `waiter.timedOut` with `running` or `starting` | Re-run `$loopWait` against the same `$manifest.runDir`; do not transition modes or start a duplicate worker. |
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |
 | `pr_found` | Use the emitted `pullRequest` value and review that PR. |
 | `weak_pr_references_only`, `no_pr_found` | Keep waiting. |
@@ -87,11 +84,8 @@ $result = $raw | ConvertFrom-Json
 $result
 ```
 
-If `$result.waiter.timedOut` is true and `$result.classification` is still `running` or `starting`, run the same `$loopWait` command again as a fresh tool call after observing this JSON. Do not start another detached worker.
-
 | Event | Reviewer response |
 |---|---|
-| `waiter.timedOut` with `running` or `starting` | Re-run `$loopWait` against the same `$manifest.runDir`; do not transition modes or start a duplicate worker. |
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |
 | `review_addressed`, `rereview_requested`, `head_changed_after_latest_review` | Inspect the new state, re-review as needed, submit a new PR review if there is feedback, or reaffirm with a PR review starting `🐾 PAW Review: +1`. Restart Follow-up Sentry mode. |
 | `already_merged` | Task complete. |
