@@ -39,6 +39,12 @@ $loopDetached = $loopPaths.detached
 $loopWait     = $loopPaths.wait
 $loopStatus   = $loopPaths.status
 
+# Dot-source the lifecycle wrapper used by every observed-watch snippet.
+# Receive-LifecycleLoopResult runs $loopWait, parses the JSON, and falls
+# back to a direct $loopStatus read if the waiter pipe produced nothing
+# the agent could parse.
+. (Join-Path $loopScripts 'Receive-LifecycleLoopResult.ps1')
+
 $ghUser = '<gh-user>'
 ```
 
@@ -52,7 +58,13 @@ If you do explicitly pass `-TimeoutSeconds` and the waiter returns JSON with `wa
 
 Before starting a new detached worker for the same PR, ensure the previous worker has reached an actionable/final state or is intentionally abandoned. If a previous worker may still be alive, inspect it with `$loopStatus`; do not start a duplicate worker for the same mode/PR. Only stop an abandoned worker by its exact manifest/status PID after verifying it belongs to that run.
 
-Non-zero waiter exit codes are expected for actionable, timeout, stalled, and crashed states; the JSON body is authoritative. If the waiter returns empty or non-JSON output, treat that as a waiter internal failure: inspect the same `$manifest.runDir` with `$loopStatus` before restarting or replacing the worker.
+### Source-of-truth invariant
+
+The detached run directory (`$manifest.runDir`) is the authoritative source of every lifecycle event. The attached waiter is only a transport that wakes the agent when something happens; it can fail to deliver clean JSON for reasons that have nothing to do with whether the event occurred (helper script crash, pipe redirection glitch, parent shell quirk, host CLI buffering). **A waiter failure is a transport failure, not proof that no lifecycle event occurred.** Before declaring "no event", restarting the worker, or asking the user what to do, always reconcile the run directory via `$loopStatus` against `$manifest.runDir`.
+
+Every observed-watch snippet in this skill uses `Receive-LifecycleLoopResult` (dot-sourced above) instead of a raw `$loopWait` invocation. The wrapper runs the waiter, returns its parsed JSON when the waiter pipe is clean, and only on empty/unparseable output does it call `$loopStatus` against the same run directory as a second-chance read. It throws only when both paths fail to recover state, and the exception body includes the original waiter output, the status output, the parse errors, and the run directory so the failure is diagnosable without re-invoking either helper.
+
+Non-zero waiter exit codes are normal for actionable, timeout, stalled, and crashed lifecycles; `Receive-LifecycleLoopResult` always returns the parsed JSON in those cases and never throws on a non-zero exit code by itself. If the wrapper does throw, treat it as a true transport failure and follow the previous-worker-reconciliation rule above before any restart.
 
 ## Role guides
 

@@ -16,11 +16,7 @@ $manifest = & $loopDetached `
   -StopExitCode 23 `
   -Quiet | ConvertFrom-Json
 
-$raw = (& $loopWait -RunDir $manifest.runDir -PollIntervalSeconds 30) -join [Environment]::NewLine
-if (-not $raw) {
-  throw "Wait-LoopDetached.ps1 returned no JSON; inspect with `$loopStatus before restarting: $($manifest.runDir)"
-}
-$result = $raw | ConvertFrom-Json
+$result = Receive-LifecycleLoopResult -LoopWait $loopWait -LoopStatus $loopStatus -Manifest $manifest -PollIntervalSeconds 30
 $result
 ```
 
@@ -76,11 +72,7 @@ $manifest = & $loopDetached `
   -StopExitCode 23 `
   -Quiet | ConvertFrom-Json
 
-$raw = (& $loopWait -RunDir $manifest.runDir -PollIntervalSeconds 30) -join [Environment]::NewLine
-if (-not $raw) {
-  throw "Wait-LoopDetached.ps1 returned no JSON; inspect with `$loopStatus before restarting: $($manifest.runDir)"
-}
-$result = $raw | ConvertFrom-Json
+$result = Receive-LifecycleLoopResult -LoopWait $loopWait -LoopStatus $loopStatus -Manifest $manifest -PollIntervalSeconds 30
 $result
 ```
 
