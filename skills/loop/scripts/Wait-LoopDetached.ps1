@@ -33,6 +33,7 @@ $ErrorActionPreference = 'Stop'
 $ExitGeneral = 1
 $ExitBadArgs = 2
 $ExitNoCommand = 3
+$ExitWaiterInternalError = 121
 $ExitWaiterTimeout = 122
 $ExitLoopTimeout = 124
 $ExitStalled = 125
@@ -367,7 +368,42 @@ while ($true) {
         }
         Start-Sleep -Seconds $sleepSeconds
     } catch {
-        Write-WaiterError "waiter failed: $($_.Exception.Message)"
-        exit $ExitGeneral
+        # Always emit a JSON status object instead of bare-text failure, so the
+        # invoking agent can parse the waiter response uniformly. Earlier the
+        # bare-text path masked a worker that had already finalized: the
+        # underlying loop's last-result.json was already on disk, but the
+        # waiter died before propagating it. Build a best-effort status from
+        # (in order): the most recent successful status read, a direct read
+        # of last-result.json from the run directory, or a minimal stub.
+        $waiterError = $_.Exception.Message
+        $fallbackStatus = $lastStatus
+        $fallbackSource = if ($null -ne $fallbackStatus) { 'previous_status_read' } else { $null }
+        if ($null -eq $fallbackStatus) {
+            try {
+                $directLastResult = Read-JsonFile -Path (Join-Path $resolvedRunDir 'last-result.json')
+            } catch {
+                $directLastResult = $null
+            }
+            $fallbackStatus = [pscustomobject]@{
+                runDir = $resolvedRunDir
+                classification = $null
+                processAlive = $null
+                lastResult = $directLastResult
+            }
+            $fallbackSource = if ($null -ne $directLastResult) { 'last_result_on_disk' } else { 'stub_only' }
+        }
+
+        try {
+            $statusWithWaiter = Add-WaiterMetadata -Status $fallbackStatus -StartedAtUtc $startedAt -PollCount $pollCount -ExitReason 'waiter_internal_error' -ConsecutiveStalledPolls $consecutiveStalledPolls
+        } catch {
+            # If even metadata wrap fails, fall through to bare-text exit below.
+            Write-WaiterError "waiter failed: $waiterError"
+            Write-WaiterError "waiter recovery also failed: $($_.Exception.Message)"
+            exit $ExitWaiterInternalError
+        }
+
+        $statusWithWaiter | Add-Member -NotePropertyName waiterError -NotePropertyValue $waiterError -Force
+        $statusWithWaiter | Add-Member -NotePropertyName waiterFallbackSource -NotePropertyValue $fallbackSource -Force
+        Write-StatusAndExit -Status $statusWithWaiter -ExitCode $ExitWaiterInternalError
     }
 }
