@@ -165,6 +165,7 @@ $HOME\.copilot\loop-watches\<watch-id>\
     "startedAt": "2026-05-25T20:05:00Z"
   },
   "lastWakeReason": null,
+  "lastWake": null,
   "supervisor": {
     "pid": 1234,
     "processStartTime": "2026-05-25T20:00:00Z",
@@ -211,6 +212,38 @@ Generation terminal states are not always logical terminal states.
 | Crash/no terminal event | Not recoverable automatically | `infrastructure_failure` |
 
 This avoids treating "12 hours elapsed while waiting for review" as "the PR sentry is done."
+
+## Actionable Wakeup Observability
+
+One recent RCA was not a liveness miss: the sentry caught a merge conflict after GitHub mergeability updated between polling cycles, recorded `merge_conflict`, and exited. The perceived miss came from presentation: the loop reported the conflict as a successful terminal `ACTION`, so Copilot CLI's shell completion notification looked like generic success until the waiter output was read.
+
+The supervised design should reduce this class of perceived miss, but it cannot eliminate polling latency. GitHub state can still update between checks, so detection will occur on the next polling attempt unless a future event-driven mechanism is added.
+
+The design response is to make actionable wakeups unambiguous at the watch contract:
+
+| Concern | Design response |
+|---|---|
+| GitHub mergeability updates between polls | Accept bounded polling latency; tune interval or add a future event source if lower latency is required. |
+| Actionable state displayed as generic success | Treat agent-reasoned events as `state = actionable`, not successful final completion. |
+| Shell notification cannot include dynamic output details | Ensure the final waiter JSON contains `lastWake.kind`, `lastWake.reason`, `lastWake.exitCode`, and `lastWake.summary`; the agent must read it after notification. |
+| Merge conflict or review request exits `0` | Avoid this for agent-reasoned work. Use domain stop codes such as `21` for merge conflict so the shell notification is at least non-successful, while the JSON gives the exact reason. |
+
+Proposed `lastWake` shape:
+
+```json
+{
+  "kind": "actionable",
+  "reason": "merge_conflict",
+  "exitCode": 21,
+  "summary": "PR has merge conflicts after origin/main moved",
+  "generation": 3,
+  "attempt": 136,
+  "detectedAt": "2026-05-25T19:58:31Z",
+  "eventPath": "generations\\0003\\events\\20260525T195831Z-merge-conflict.json"
+}
+```
+
+For PAW sentry workflows, `ACTION` should mean "wake the agent and require inspection," not "the watch completed successfully." If an internal action command fully handles work and acks it atomically, that automation can exit `0`; merge conflicts, review comments, re-review requests, and CI failures should remain non-consuming actionable events.
 
 ## Cleanup and Retention
 
@@ -292,6 +325,7 @@ Add tests for:
 - Missing `Get-LoopStatus.ps1` falls back to durable state and emits JSON.
 - Worker timeout while still waiting starts generation N+1 under renew-on-timeout policy.
 - Actionable event in any generation wakes the watcher and does not auto-ack.
+- Merge conflict wakeup is reported as `actionable` with reason `merge_conflict` and a domain stop code, not generic successful final completion.
 - Supervisor stale heartbeat wakes waiter with `infrastructure_failure`.
 - Cleanup skips active/current generation.
 - Cleanup retains actionable/failure/crashed generations.
