@@ -2,7 +2,7 @@
 
 Status: design draft  
 Work ID: `loop-supervised-watch`  
-Scope: `skills/loop` long-wait reliability for Windows detached loops, PAW PR/re-review sentry, and related documentation/tests.
+Scope: `skills/loop` long-wait reliability for generic Windows detached-loop use cases. PR lifecycle management is the primary driving example, but domain-specific PR semantics belong outside the generic loop design.
 
 ## Problem
 
@@ -11,7 +11,7 @@ The current Windows loop model has two important pieces:
 1. `Start-LoopDetached.ps1` starts a durable `loop.ps1` worker and writes a run directory.
 2. `Wait-LoopDetached.ps1` remains tool-managed so Copilot CLI can wake the agent when the run becomes final, actionable, crashed, or persistently stalled.
 
-That model works for many waits, but it treats one worker run as the unit of liveness. A long PR/re-review sentry can miss future events if the worker reaches a finite timeout and no active observer restarts it. The previous hourly waiter recycling was noisy, but it accidentally acted like a weak supervisory layer. Removing that noise exposed the deeper issue: long waits need a logical watch owner, not only one worker process plus one waiter process.
+That model works for many waits, but it treats one worker run as the unit of liveness. A long watch can miss future events if the worker reaches a finite timeout and no active observer restarts it. The previous hourly waiter recycling was noisy, but it accidentally acted like a weak supervisory layer. Removing that noise exposed the deeper issue: long waits need a logical watch owner, not only one worker process plus one waiter process.
 
 ## Design Goals
 
@@ -26,7 +26,7 @@ That model works for many waits, but it treats one worker run as the unit of liv
 
 - Do not build a global daemon or background service.
 - Do not rely on Copilot CLI internals beyond the documented shell/task behavior.
-- Do not auto-ack stateful work. PR review, CI, conflicts, and re-review events remain agent-reasoned peek -> act -> ack flows.
+- Do not auto-ack stateful work. Domain-specific events that require agent reasoning remain peek -> act -> ack flows.
 - Do not delete run artifacts immediately on completion; they are the evidence needed for postmortems.
 
 ## Current Architecture
@@ -148,8 +148,8 @@ $HOME\.copilot\loop-watches\<watch-id>\
 ```json
 {
   "schemaVersion": 1,
-  "watchId": "pr-123-rereview",
-  "name": "pr-123-rereview",
+  "watchId": "long-watch-example",
+  "name": "long-watch-example",
   "createdAt": "2026-05-25T20:00:00Z",
   "updatedAt": "2026-05-25T20:05:00Z",
   "state": "running",
@@ -211,39 +211,37 @@ Generation terminal states are not always logical terminal states.
 | Timeout while still waiting | No renewal | `final` with timeout |
 | Crash/no terminal event | Not recoverable automatically | `infrastructure_failure` |
 
-This avoids treating "12 hours elapsed while waiting for review" as "the PR sentry is done."
+This avoids treating "12 hours elapsed while waiting" as "the logical watch is done."
 
 ## Actionable Wakeup Observability
 
-One recent RCA was not a liveness miss: the sentry caught a merge conflict after GitHub mergeability updated between polling cycles, recorded `merge_conflict`, and exited. The perceived miss came from presentation: the loop reported the conflict as a successful terminal `ACTION`, so Copilot CLI's shell completion notification looked like generic success until the waiter output was read.
+The supervised design should make actionable wakeups unambiguous without encoding semantics for any particular check script. The loop framework should not decide what a domain event means; it should preserve the structured reason, exit code, summary, and event artifact supplied by the check.
 
-The supervised design should reduce this class of perceived miss, but it cannot eliminate polling latency. GitHub state can still update between checks, so detection will occur on the next polling attempt unless a future event-driven mechanism is added.
-
-The design response is to make actionable wakeups unambiguous at the watch contract:
+The design response is a generic watch contract:
 
 | Concern | Design response |
 |---|---|
-| GitHub mergeability updates between polls | Accept bounded polling latency; tune interval or add a future event source if lower latency is required. |
+| External state updates between polls | Accept bounded polling latency; tune interval or add a domain-specific event source if lower latency is required. |
 | Actionable state displayed as generic success | Treat agent-reasoned events as `state = actionable`, not successful final completion. |
 | Shell notification cannot include dynamic output details | Ensure the final waiter JSON contains `lastWake.kind`, `lastWake.reason`, `lastWake.exitCode`, and `lastWake.summary`; the agent must read it after notification. |
-| Merge conflict or review request exits `0` | Avoid this for agent-reasoned work. Use domain stop codes such as `21` for merge conflict so the shell notification is at least non-successful, while the JSON gives the exact reason. |
+| Domain check exits with an ambiguous code | Preserve the check's exit code and reason; domain skills should choose stop codes that make their own actionable states clear. |
 
 Proposed `lastWake` shape:
 
 ```json
 {
   "kind": "actionable",
-  "reason": "merge_conflict",
-  "exitCode": 21,
-  "summary": "PR has merge conflicts after origin/main moved",
+  "reason": "domain_event_requires_agent",
+  "exitCode": 31,
+  "summary": "The check detected work that requires agent reasoning",
   "generation": 3,
   "attempt": 136,
   "detectedAt": "2026-05-25T19:58:31Z",
-  "eventPath": "generations\\0003\\events\\20260525T195831Z-merge-conflict.json"
+  "eventPath": "generations\\0003\\events\\20260525T195831Z-actionable.json"
 }
 ```
 
-For PAW sentry workflows, `ACTION` should mean "wake the agent and require inspection," not "the watch completed successfully." If an internal action command fully handles work and acks it atomically, that automation can exit `0`; merge conflicts, review comments, re-review requests, and CI failures should remain non-consuming actionable events.
+For the generic loop skill, `actionable` means "wake the agent and require inspection," not "the watch completed successfully." If an internal action command fully handles work and acks it atomically, that automation can exit `0`; otherwise, agent-reasoned work should remain a non-consuming actionable event.
 
 ## Cleanup and Retention
 
@@ -306,7 +304,7 @@ Compatibility:
 
 - Existing `Start-LoopDetached.ps1`, `Wait-LoopDetached.ps1`, and `Get-LoopStatus.ps1` remain supported.
 - Simple waits can keep using detached worker + attached waiter.
-- PAW PR/re-review sentry should move to supervised observed watch.
+- Domain-specific long-running sentries, including PAW PR/re-review sentry, can opt into supervised observed watch.
 
 ## Documentation Changes
 
@@ -325,7 +323,7 @@ Add tests for:
 - Missing `Get-LoopStatus.ps1` falls back to durable state and emits JSON.
 - Worker timeout while still waiting starts generation N+1 under renew-on-timeout policy.
 - Actionable event in any generation wakes the watcher and does not auto-ack.
-- Merge conflict wakeup is reported as `actionable` with reason `merge_conflict` and a domain stop code, not generic successful final completion.
+- Actionable wakeup is reported as `actionable` with the domain-provided reason, summary, event path, and exit code, not generic successful final completion.
 - Supervisor stale heartbeat wakes waiter with `infrastructure_failure`.
 - Cleanup skips active/current generation.
 - Cleanup retains actionable/failure/crashed generations.
@@ -336,5 +334,5 @@ Add tests for:
 
 1. Should the watch root live under `$HOME\.copilot\loop-watches\` or should it reuse `$HOME\.copilot\loop-runs\` with a `watch.json` root?
 2. Should `Start-LoopObserved.ps1` launch a separate detached supervisor process in the first implementation, or should the first version put renewal in the attached waiter and accept weaker liveness if the waiter dies?
-3. What default retention is right for PAW PR sentry: 7 days, 14 days, or count-only retention?
+3. What default retention is right for generic long watches: 7 days, 14 days, or count-only retention?
 4. Should global orphan cleanup ever run automatically, or only as an explicit user/agent command?
