@@ -33,8 +33,8 @@ Planning Review Interaction Mode: parallel
 Planning Review Specialist Models: none
 Planning Review Perspectives: auto
 Planning Review Perspective Cap: 2
-Custom Workflow Instructions: Human review and approval is required after planning only. Continue design conversation after PAW init before finalizing the plan. The work targets the broader supervised observed watch design for long loop waits, including supervisor renewal, cleanup and retention, missing-helper recovery, documentation, and tests.
-Initial Prompt: Run the broader loop supervised observed watch design through PAW Lite using a worktree and commit-and-clean artifact lifecycle. Planning docs review and final review are single-model reviews using claude-opus-4.7-high.
+Custom Workflow Instructions: Human review and approval is required after planning only. Continue design conversation after PAW init before finalizing the plan. The work targets a hardened observed watch design for long loop waits using the existing detached worker plus attached/backgrounded waiter model, including explicit watch-until-terminal timeout intent, cleanup and retention, missing-helper recovery, structured wakeup metadata, documentation, and tests. A separate supervisor process, watch root, and generation tree are deferred unless v1 evidence proves they are necessary.
+Initial Prompt: Run the hardened observed watch design through PAW Lite using a worktree and commit-and-clean artifact lifecycle. Planning docs review and final review are single-model reviews using claude-opus-4.7-high.
 Issue URL: none
 Remote: origin
 Artifact Lifecycle: commit-and-clean

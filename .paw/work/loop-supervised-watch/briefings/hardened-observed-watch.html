@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hardened Observed Watch Briefing</title>
+  <style>
+    :root {
+      --bg: #09111f;
+      --panel: #121d31;
+      --panel2: #17243b;
+      --ink: #eef5ff;
+      --muted: #aebbd3;
+      --line: #314464;
+      --blue: #6aa7ff;
+      --green: #76d99f;
+      --amber: #ffd166;
+      --red: #ff7b7b;
+      --purple: #b392ff;
+      --cyan: #66e3ff;
+      --radius: 20px;
+      --shadow: 0 18px 44px rgba(0, 0, 0, .34);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(106, 167, 255, .22), transparent 34rem),
+        radial-gradient(circle at 85% 8%, rgba(118, 217, 159, .12), transparent 30rem),
+        var(--bg);
+      color: var(--ink);
+      line-height: 1.45;
+    }
+    .wrap {
+      width: min(1280px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 58px;
+    }
+    header {
+      display: grid;
+      grid-template-columns: 1.4fr .6fr;
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 22px;
+    }
+    .hero, .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.026));
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .hero { padding: 30px; }
+    .card { padding: 22px; }
+    h1, h2, h3 { margin: 0; letter-spacing: -.02em; }
+    h1 { font-size: clamp(34px, 5vw, 58px); line-height: .98; }
+    h2 { font-size: 24px; margin-bottom: 14px; }
+    h3 { font-size: 17px; margin-bottom: 8px; }
+    p { margin: 0; color: var(--muted); }
+    .lede {
+      margin-top: 18px;
+      max-width: 82ch;
+      color: #dce8ff;
+      font-size: 19px;
+    }
+    .pillrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.075);
+      border: 1px solid rgba(255,255,255,.1);
+      color: #e4ecff;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 99px; display: inline-block; background: var(--blue); box-shadow: 0 0 0 4px rgba(106,167,255,.12); }
+    .dot.green { background: var(--green); box-shadow: 0 0 0 4px rgba(118,217,159,.12); }
+    .dot.amber { background: var(--amber); box-shadow: 0 0 0 4px rgba(255,209,102,.12); }
+    .dot.red { background: var(--red); box-shadow: 0 0 0 4px rgba(255,123,123,.12); }
+    .grid { display: grid; gap: 22px; margin: 22px 0; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .stack { display: grid; gap: 12px; }
+    .mini {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.05);
+      border: 1px solid rgba(255,255,255,.08);
+    }
+    .mini b { color: var(--ink); }
+    .callout {
+      border-left: 4px solid var(--amber);
+      background: rgba(255,209,102,.09);
+      padding: 16px 18px;
+      border-radius: 14px;
+      color: var(--muted);
+      margin-top: 14px;
+    }
+    .callout.good { border-color: var(--green); background: rgba(118,217,159,.09); }
+    .callout.blue { border-color: var(--blue); background: rgba(106,167,255,.09); }
+    .callout.bad { border-color: var(--red); background: rgba(255,123,123,.09); }
+    .callout strong { color: var(--ink); }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      color: #dff3ff;
+      background: rgba(102,227,255,.08);
+      border: 1px solid rgba(102,227,255,.12);
+      border-radius: 7px;
+      padding: 1px 6px;
+      white-space: nowrap;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 12px 13px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    th {
+      color: #f3f7ff;
+      background: rgba(255,255,255,.07);
+      font-weight: 700;
+    }
+    td { color: var(--muted); background: rgba(255,255,255,.025); }
+    tr:last-child td { border-bottom: 0; }
+    .tag {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #071321;
+      background: var(--blue);
+      margin-bottom: 5px;
+    }
+    .tag.good { background: var(--green); }
+    .tag.warn { background: var(--amber); }
+    .tag.bad { background: var(--red); }
+    .tag.future { background: var(--purple); color: #120d24; }
+    .diagram {
+      width: 100%;
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.015)),
+        repeating-linear-gradient(90deg, transparent 0, transparent 39px, rgba(255,255,255,.025) 40px),
+        repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(255,255,255,.018) 40px);
+      border: 1px solid rgba(255,255,255,.09);
+      overflow: hidden;
+    }
+    svg { width: 100%; height: auto; display: block; }
+    .box { fill: #18243a; stroke: #4b5d88; stroke-width: 1.5; }
+    .box2 { fill: #112a3d; stroke: #3b88b6; stroke-width: 1.5; }
+    .box3 { fill: #1d2434; stroke: #7b6cc5; stroke-width: 1.5; }
+    .okbox { fill: #132b25; stroke: #76d99f; stroke-width: 1.5; }
+    .warnbox { fill: #31281c; stroke: #ffd166; stroke-width: 1.5; }
+    .failbox { fill: #321b27; stroke: #ff7b7b; stroke-width: 1.5; }
+    .svgtext { fill: #eef5ff; font: 700 15px "Segoe UI", sans-serif; }
+    .svgtitle { fill: #eef5ff; font: 800 18px "Segoe UI", sans-serif; }
+    .svgsmall { fill: #aebbd3; font: 12px "Segoe UI", sans-serif; }
+    .arrow { stroke: #86a8e8; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+    .goodarrow { stroke: #76d99f; stroke-width: 2.2; fill: none; marker-end: url(#goodarrow); }
+    .badarrow { stroke: #ff7b7b; stroke-width: 2.2; fill: none; marker-end: url(#badarrow); stroke-dasharray: 6 5; }
+    .footer {
+      color: #8494b8;
+      font-size: 13px;
+      margin-top: 26px;
+      text-align: center;
+    }
+    @media (max-width: 940px) {
+      header, .two, .three { grid-template-columns: 1fr; }
+      .wrap { width: min(100% - 24px, 1280px); }
+    }
+    @media print {
+      body { background: white; color: #111827; }
+      .hero, .card { box-shadow: none; border-color: #d1d5db; background: white; }
+      p, td, .callout { color: #374151; }
+      .pill, code, .mini { border-color: #d1d5db; background: #f9fafb; color: #111827; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <section class="hero">
+        <h1>Hardened Observed Watch</h1>
+        <p class="lede">A simpler reliability design for long-running loop waits: keep the existing durable worker plus attached/backgrounded waiter, then harden the contracts that actually failed.</p>
+        <div class="pillrow">
+          <span class="pill"><span class="dot green"></span> No v1 supervisor process</span>
+          <span class="pill"><span class="dot"></span> Copilot CLI waiter stays attached</span>
+          <span class="pill"><span class="dot amber"></span> Long watches use unbounded worker timeout</span>
+          <span class="pill"><span class="dot red"></span> Unknown liveness wakes loudly</span>
+        </div>
+      </section>
+      <aside class="card">
+        <h2>Core decision</h2>
+        <div class="stack">
+          <div class="mini"><b>V1 unit:</b> one run directory, one detached worker, one observed waiter.</div>
+          <div class="mini"><b>Deferred:</b> separate supervisor, generations, watch root, and new observed script family.</div>
+          <div class="mini"><b>Reason:</b> the known RCAs are contract failures in existing pieces, not proof that another long-lived process is required.</div>
+        </div>
+      </aside>
+    </header>
+
+    <section class="card">
+      <h2>Centerpiece architecture: tie-in to Copilot CLI</h2>
+      <div class="diagram">
+        <svg viewBox="0 0 1220 720" role="img" aria-label="Hardened observed watch architecture tied to Copilot CLI components">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#86a8e8"/></marker>
+            <marker id="goodarrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#76d99f"/></marker>
+            <marker id="badarrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#ff7b7b"/></marker>
+          </defs>
+
+          <rect x="26" y="28" width="1168" height="170" rx="22" fill="rgba(179,146,255,.08)" stroke="rgba(179,146,255,.35)"/>
+          <text x="50" y="58" class="svgtitle">Copilot CLI runtime and task UI</text>
+          <text x="50" y="82" class="svgsmall">This layer provides chat interactivity and the shell completion notification. It must own the waiter process.</text>
+
+          <rect x="60" y="112" width="180" height="58" rx="14" class="box3"/>
+          <text x="150" y="136" text-anchor="middle" class="svgtext">Foreground chat</text>
+          <text x="150" y="156" text-anchor="middle" class="svgsmall">user can still talk</text>
+
+          <rect x="310" y="104" width="220" height="74" rx="14" class="box3"/>
+          <text x="420" y="129" text-anchor="middle" class="svgtext">Task registry /tasks</text>
+          <text x="420" y="150" text-anchor="middle" class="svgsmall">attached background shell</text>
+          <text x="420" y="166" text-anchor="middle" class="svgsmall">or promoted sync shell</text>
+
+          <rect x="600" y="104" width="260" height="74" rx="14" class="okbox"/>
+          <text x="730" y="129" text-anchor="middle" class="svgtext">Attached shell session</text>
+          <text x="730" y="150" text-anchor="middle" class="svgsmall">runs Wait-LoopDetached</text>
+          <text x="730" y="166" text-anchor="middle" class="svgsmall">completion callback wired</text>
+
+          <rect x="940" y="104" width="210" height="74" rx="14" class="okbox"/>
+          <text x="1045" y="129" text-anchor="middle" class="svgtext">shell_completed</text>
+          <text x="1045" y="150" text-anchor="middle" class="svgsmall">system notification</text>
+          <text x="1045" y="166" text-anchor="middle" class="svgsmall">agent reads JSON</text>
+
+          <rect x="26" y="240" width="1168" height="198" rx="22" fill="rgba(102,227,255,.06)" stroke="rgba(102,227,255,.28)"/>
+          <text x="50" y="270" class="svgtitle">Loop observer layer</text>
+          <text x="50" y="294" class="svgsmall">This layer converts durable run state into one quiet, explicit wakeup. It is improved, not replaced.</text>
+
+          <rect x="80" y="330" width="235" height="76" rx="14" class="box2"/>
+          <text x="198" y="356" text-anchor="middle" class="svgtext">Wait-LoopDetached.ps1</text>
+          <text x="198" y="377" text-anchor="middle" class="svgsmall">attached/backgrounded</text>
+          <text x="198" y="394" text-anchor="middle" class="svgsmall">emits one final JSON</text>
+
+          <rect x="395" y="330" width="230" height="76" rx="14" class="box"/>
+          <text x="510" y="356" text-anchor="middle" class="svgtext">Get-LoopStatus.ps1</text>
+          <text x="510" y="377" text-anchor="middle" class="svgsmall">normal classifier</text>
+          <text x="510" y="394" text-anchor="middle" class="svgsmall">PID + heartbeat + events</text>
+
+          <rect x="705" y="330" width="230" height="76" rx="14" class="warnbox"/>
+          <text x="820" y="356" text-anchor="middle" class="svgtext">Durable fallback</text>
+          <text x="820" y="377" text-anchor="middle" class="svgsmall">if helper missing/bad</text>
+          <text x="820" y="394" text-anchor="middle" class="svgsmall">still emits JSON</text>
+
+          <rect x="1010" y="330" width="130" height="76" rx="14" class="okbox"/>
+          <text x="1075" y="356" text-anchor="middle" class="svgtext">lastWake</text>
+          <text x="1075" y="377" text-anchor="middle" class="svgsmall">reason</text>
+          <text x="1075" y="394" text-anchor="middle" class="svgsmall">exit + event</text>
+
+          <rect x="26" y="480" width="880" height="192" rx="22" fill="rgba(118,217,159,.055)" stroke="rgba(118,217,159,.25)"/>
+          <text x="50" y="510" class="svgtitle">Durable worker layer</text>
+          <text x="50" y="534" class="svgsmall">This layer owns polling and durable evidence. Long watch mode avoids accidental finite timeout.</text>
+
+          <rect x="72" y="572" width="235" height="76" rx="14" class="box2"/>
+          <text x="190" y="598" text-anchor="middle" class="svgtext">Start-LoopDetached</text>
+          <text x="190" y="619" text-anchor="middle" class="svgsmall">-WatchUntilTerminal</text>
+          <text x="190" y="636" text-anchor="middle" class="svgsmall">TimeoutSeconds = 0</text>
+
+          <rect x="388" y="572" width="205" height="76" rx="14" class="okbox"/>
+          <text x="491" y="598" text-anchor="middle" class="svgtext">loop.ps1 worker</text>
+          <text x="491" y="619" text-anchor="middle" class="svgsmall">check/action/ack</text>
+          <text x="491" y="636" text-anchor="middle" class="svgsmall">heartbeat continues</text>
+
+          <rect x="675" y="572" width="205" height="76" rx="14" class="box"/>
+          <text x="778" y="598" text-anchor="middle" class="svgtext">Run directory</text>
+          <text x="778" y="619" text-anchor="middle" class="svgsmall">manifest, params</text>
+          <text x="778" y="636" text-anchor="middle" class="svgsmall">last-result, events, logs</text>
+
+          <rect x="940" y="500" width="230" height="172" rx="22" fill="rgba(255,209,102,.075)" stroke="rgba(255,209,102,.35)"/>
+          <text x="966" y="532" class="svgtitle">Explicit cleanup</text>
+          <rect x="970" y="568" width="170" height="76" rx="14" class="warnbox"/>
+          <text x="1055" y="594" text-anchor="middle" class="svgtext">Invoke-LoopCleanup</text>
+          <text x="1055" y="615" text-anchor="middle" class="svgsmall">WhatIf by default</text>
+          <text x="1055" y="632" text-anchor="middle" class="svgsmall">-Apply required</text>
+
+          <path d="M240 141 H308" class="arrow"/>
+          <path d="M530 141 H598" class="arrow"/>
+          <path d="M860 141 H938" class="goodarrow"/>
+          <path d="M1045 178 C1040 215 1080 250 1075 328" class="goodarrow"/>
+          <path d="M730 178 C725 235 285 250 200 328" class="goodarrow"/>
+
+          <path d="M315 368 H393" class="arrow"/>
+          <path d="M625 368 H703" class="arrow"/>
+          <path d="M935 368 H1008" class="goodarrow"/>
+          <path d="M1075 330 C1050 245 875 210 760 180" class="goodarrow"/>
+
+          <path d="M307 610 H386" class="arrow"/>
+          <path d="M593 610 H673" class="goodarrow"/>
+          <path d="M778 572 C760 505 590 460 510 408" class="arrow"/>
+          <path d="M778 572 C835 505 860 455 820 408" class="arrow"/>
+          <path d="M940 606 H882" class="arrow"/>
+
+          <path d="M730 104 C700 70 760 40 840 60" class="badarrow"/>
+          <text x="815" y="54" text-anchor="middle" class="svgsmall" fill="#ffb4b4">do not shell-detach waiter</text>
+        </svg>
+      </div>
+      <div class="grid three">
+        <div class="callout good"><strong>Durability stays simple:</strong> one run directory remains the source of truth.</div>
+        <div class="callout blue"><strong>Wakeup stays explicit:</strong> Copilot CLI owns the attached waiter and sends <code>shell_completed</code>.</div>
+        <div class="callout"><strong>Robustness comes from contracts:</strong> unbounded watch intent, fallback, structured wakeups, and safe cleanup.</div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>What changed from the earlier supervisor idea</h2>
+        <table>
+          <thead><tr><th>Earlier idea</th><th>V1 decision</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>Detached supervisor process</td><td><span class="tag bad">Deferred</span><br>Do not add in v1.</td><td>Adds another liveness owner, heartbeat, PID check, and possible false infrastructure failure.</td></tr>
+            <tr><td>Watch root and generations</td><td><span class="tag bad">Deferred</span><br>Reuse existing run directory.</td><td>Generations double the durable state surface before evidence shows they are necessary.</td></tr>
+            <tr><td>New observed script family</td><td><span class="tag bad">Deferred</span><br>Harden existing scripts.</td><td>Keeps the skill's selection matrix small and reduces user/agent confusion.</td></tr>
+            <tr><td>Supervisor cleanup</td><td><span class="tag good">Simplified</span><br>Use explicit cleanup command.</td><td>Cleanup should be conservative, inspectable, and never a hidden side effect of waiting.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>V1 hardening package</h2>
+        <div class="stack">
+          <div class="mini"><span class="tag good">1</span><br><b>Missing-helper fallback</b><br>Waiter reads durable files directly and emits JSON instead of bare text failure.</div>
+          <div class="mini"><span class="tag good">2</span><br><b>Watch-until-terminal intent</b><br><code>-WatchUntilTerminal</code> records intent and defaults worker timeout to unbounded.</div>
+          <div class="mini"><span class="tag good">3</span><br><b>Structured wakeups</b><br><code>lastWake</code> preserves domain reason, exit code, summary, attempt, timestamp, and event path.</div>
+          <div class="mini"><span class="tag good">4</span><br><b>Safe cleanup</b><br><code>Invoke-LoopCleanup.ps1</code> reports by default and deletes only with <code>-Apply</code>.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <div class="card">
+        <h2>Failure outcome matrix</h2>
+        <table>
+          <thead><tr><th>Failure</th><th>Expected v1 behavior</th></tr></thead>
+          <tbody>
+            <tr><td>Status helper missing</td><td>Durable fallback classifies from run files and emits structured JSON.</td></tr>
+            <tr><td>Worker disappears without event</td><td>Waiter wakes with crashed/infrastructure failure.</td></tr>
+            <tr><td>Heartbeat stale repeatedly</td><td>Waiter wakes with stalled status.</td></tr>
+            <tr><td>Finite timeout in bounded mode</td><td>Waiter wakes with timeout/final state.</td></tr>
+            <tr><td>Finite timeout explicitly set in watch mode</td><td>Waiter makes the configured timeout obvious in final metadata.</td></tr>
+            <tr><td>Waiter interrupted</td><td>Reattach a new waiter to the same run directory.</td></tr>
+            <tr><td>Copilot CLI exits</td><td>Automatic wakeup is lost, but worker state remains recoverable from disk.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2>Reliability boundaries</h2>
+        <table>
+          <thead><tr><th>The loop can make solid</th><th>Still outside loop control</th></tr></thead>
+          <tbody>
+            <tr><td>Durable state, liveness classification, structured wakeups, cleanup safety.</td><td>Machine sleep, host process death, network outages, expired auth, wrong domain check logic.</td></tr>
+            <tr><td>Long watches do not end by omitted timeout choices when <code>-WatchUntilTerminal</code> is used.</td><td>A caller explicitly choosing a finite timeout for a long watch.</td></tr>
+            <tr><td>Waiter remains observable when backgrounded through Copilot CLI.</td><td>A waiter shell-detached by external scripts or user action.</td></tr>
+          </tbody>
+        </table>
+        <div class="callout blue"><strong>Practical standard:</strong> fail loudly with recoverable state rather than attempting silent self-healing through another autonomous process.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Implementation-ready test focus</h2>
+      <div class="grid three">
+        <div class="mini"><b>Fallback tests</b><br>Helper missing, helper malformed, durable actionable/final, durable unreadable.</div>
+        <div class="mini"><b>Intent tests</b><br><code>-WatchUntilTerminal</code> sets timeout to 0 unless explicit timeout was supplied.</div>
+        <div class="mini"><b>Wake tests</b><br><code>lastWake</code> includes reason, exit code, summary, event path, and attempt.</div>
+        <div class="mini"><b>Cleanup tests</b><br>WhatIf no delete; Apply skips live; retain failures; prune old final-success runs.</div>
+        <div class="mini"><b>Docs tests</b><br>Observed watch vs background handoff stays clear in examples.</div>
+        <div class="mini"><b>Boundary tests</b><br>Stalled/crashed states wake as infrastructure/status failures.</div>
+      </div>
+    </section>
+
+    <p class="footer">Local PAW briefing for loop-supervised-watch. Self-contained; no external assets or network dependencies.</p>
+  </div>
+</body>
+</html>

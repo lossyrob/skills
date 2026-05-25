@@ -1,8 +1,20 @@
-# Loop Supervised Watch Design
+# Hardened Observed Watch Design
 
 Status: design draft  
 Work ID: `loop-supervised-watch`  
 Scope: `skills/loop` long-wait reliability for generic Windows detached-loop use cases. PR lifecycle management is the primary driving example, but domain-specific PR semantics belong outside the generic loop design.
+
+## Decision
+
+The first robust iteration should **not** introduce a separate detached supervisor process, watch root, generation tree, or new `Start-LoopObserved.ps1` / `Wait-LoopObserved.ps1` script family.
+
+Instead, v1 hardens the existing observed-watch model:
+
+```text
+one detached worker + one attached/backgrounded waiter + one durable run directory
+```
+
+This is intentionally simpler than the earlier supervisor design. It addresses the known RCAs by strengthening the contracts around timeout intent, durable status fallback, actionable wakeup metadata, and cleanup, without adding another long-lived autonomous process that can fail.
 
 ## Problem
 
@@ -11,328 +23,225 @@ The current Windows loop model has two important pieces:
 1. `Start-LoopDetached.ps1` starts a durable `loop.ps1` worker and writes a run directory.
 2. `Wait-LoopDetached.ps1` remains tool-managed so Copilot CLI can wake the agent when the run becomes final, actionable, crashed, or persistently stalled.
 
-That model works for many waits, but it treats one worker run as the unit of liveness. A long watch can miss future events if the worker reaches a finite timeout and no active observer restarts it. The previous hourly waiter recycling was noisy, but it accidentally acted like a weak supervisory layer. Removing that noise exposed the deeper issue: long waits need a logical watch owner, not only one worker process plus one waiter process.
+That model works for many waits, but long autonomous agent workflows depend on it being boringly reliable. Known issues:
 
-## Design Goals
-
-- Preserve Copilot CLI automatic wakeup while keeping chat usable during long waits.
-- Make the durable unit a logical watch, not an individual worker generation.
-- Renew worker generations when a watch-until-terminal workflow is still waiting.
-- Surface infrastructure failures as actionable wakeups instead of silently losing liveness.
-- Add conservative cleanup and retention for run directories without deleting active or diagnostically useful state.
-- Keep state file based operation inspectable, reattachable, and easy to debug.
-
-## Non-goals
-
-- Do not build a global daemon or background service.
-- Do not rely on Copilot CLI internals beyond the documented shell/task behavior.
-- Do not auto-ack stateful work. Domain-specific events that require agent reasoning remain peek -> act -> ack flows.
-- Do not delete run artifacts immediately on completion; they are the evidence needed for postmortems.
-
-## Current Architecture
-
-```text
-Agent
-  |
-  | starts
-  v
-Start-LoopDetached.ps1 -----> loop.ps1 worker
-  |                              |
-  | writes run dir               | writes heartbeat, last-result, events
-  v                              v
-$HOME\.copilot\loop-runs\<run>  Get-LoopStatus.ps1
-  ^                              |
-  | reads                        |
-Wait-LoopDetached.ps1 <----------
-  |
-  | attached/tool-managed completion
-  v
-Copilot CLI shell_completed notification
-```
-
-Important current properties:
-
-- The run directory is the durable source of truth.
-- The detached worker alone does not wake the agent.
-- The waiter is intentionally quiet and disposable; it can be reattached to the same run directory.
-- Copilot CLI backgrounding is appropriate for the waiter when it remains an attached/backgrounded shell task.
-- Shell-side detaching the waiter is not equivalent; it turns observed watch into background handoff.
-
-Known gaps:
-
-- Missing `Get-LoopStatus.ps1` can still fail before durable fallback in some paths.
-- A finite worker timeout is terminal even when the logical watch should continue.
+- A finite worker timeout can end a long logical watch before future events arrive.
+- Some missing-helper paths in `Wait-LoopDetached.ps1` can fail before durable fallback.
+- Actionable wakeups can look generic until the final waiter output is read.
 - Run directories are durable scratch state with only manual cleanup guidance.
+- Old waiter recycling reduced missed liveness but created noise and did not fix the underlying contracts.
 
-## Proposed Architecture
+## Reliability Model
 
-Introduce a supervised observed watch layer:
+The loop skill cannot guarantee progress across machine sleep, host process termination, broken credentials, network outages, or incorrect domain check scripts. It can guarantee stronger loop-layer behavior:
 
-```text
-Copilot CLI task runtime
-  - foreground chat remains usable
-  - attached/backgrounded waiter remains tool-managed
-  - shell_completed wakes agent
-
-Observed watch layer
-  - Wait-LoopObserved.ps1 or enhanced Wait-LoopDetached.ps1
-  - emits one final JSON wakeup
-  - writes observer heartbeat/status
-  - reports actionable/final/crashed/stalled/infrastructure failure
-
-Durable watch supervisor layer
-  - Start-LoopObserved.ps1 creates watch root + watch.json
-  - starts worker generation N
-  - renews generation N+1 on policy rollover
-  - owns cleanup/retention
-  - exposes watch-level status
-
-Worker generation layer
-  - Start-LoopDetached.ps1 starts loop.ps1 for one generation
-  - each generation has its own run directory
-  - loop.ps1 remains focused on check/action/ack/heartbeat/events
-```
-
-The key shift is semantic:
-
-| Current concept | Proposed concept |
+| Invariant | Required behavior |
 |---|---|
-| One run is the watch. | One logical watch owns many possible runs. |
-| Worker timeout ends the sentry. | Worker timeout can be a rollover boundary. |
-| Run directory is the only durable handle. | Watch directory has `watch.json`; generation run dirs remain inspectable. |
-| Cleanup is manual. | Supervisor applies conservative retention. |
+| Durable state remains inspectable | The run directory is the source of truth for heartbeat, latest result, events, logs, and manifest. |
+| Automatic wakeup is preserved when possible | The waiter remains an attached/backgrounded Copilot CLI shell task, not a shell-detached process. |
+| Long watches do not end by accidental elapsed-time timeout | Watch-until-terminal workflows use unbounded worker timeout by default. |
+| Status helper failures do not erase durable evidence | The waiter falls back to direct durable-file classification and emits JSON. |
+| Domain events are not generic success | Waiter output carries structured `lastWake` metadata. |
+| Unknown liveness is loud | Crashed, stalled, unreadable, or ambiguous state wakes as an infrastructure/status failure. |
+| Scratch state is cleaned safely | Cleanup is explicit, PID/start-time safe, and conservative. |
 
-## Process Model
-
-Recommended process split:
-
-1. **Detached supervisor process** owns logical liveness.
-   - Starts worker generations.
-   - Observes generation status.
-   - Renews when policy says timeout is a rollover.
-   - Writes `watch.json` heartbeat and cleanup status.
-2. **Detached worker generation** performs repeated checks for one generation.
-   - Existing `loop.ps1` contract mostly remains unchanged.
-3. **Attached/backgrounded waiter** observes the watch and wakes the agent.
-   - This is the process Copilot CLI should know about.
-   - It should be backgrounded through the CLI task UI, not `Start-Job`, `Start-Process`, `&`, or `detach: true`.
-
-If the waiter dies, automatic wakeup is lost, but the supervisor can keep the logical watch alive and preserve future events in durable state. If the supervisor dies, the waiter should detect stale supervisor heartbeat and wake with an infrastructure failure.
-
-## Watch State
-
-Proposed watch root:
+## Architecture
 
 ```text
-$HOME\.copilot\loop-watches\<watch-id>\
-  watch.json
-  supervisor.pid
-  supervisor.log
-  observer.json
-  generations\
-    0001\
-      manifest.json
-      params.json
-      loop.pid
-      stdout.log
-      stderr.log
-      last-result.json
-      heartbeat.json
-      events\
-    0002\
-      ...
+Copilot CLI runtime
+  - foreground chat stays usable
+  - task registry /tasks tracks attached shell tasks
+  - attached/backgrounded shell runs Wait-LoopDetached.ps1
+  - shell_completed notification wakes agent
+
+Loop observer layer
+  - Wait-LoopDetached.ps1 polls Get-LoopStatus.ps1
+  - falls back to durable files if helper is missing or bad
+  - emits one final JSON object with waiter + lastWake metadata
+  - exits with success, domain stop code, timeout, stall, crash, or infrastructure failure
+
+Durable worker layer
+  - Start-LoopDetached.ps1 starts loop.ps1
+  - loop.ps1 runs the check/action/ack loop
+  - one run directory contains manifest, params, heartbeat, last-result, events, logs
+  - watch-until-terminal mode uses TimeoutSeconds = 0 unless the caller explicitly opts into a finite timeout
+
+Cleanup layer
+  - Invoke-LoopCleanup.ps1 reports old runs by default
+  - destructive cleanup requires explicit -Apply
+  - active and diagnostically useful runs are retained
 ```
 
-`watch.json` should be the stable watch-level contract:
+## Copilot CLI Integration
+
+Copilot CLI has two different background concepts that must remain distinct:
+
+| Mechanism | Meaning for this design |
+|---|---|
+| CLI task backgrounding / promoted sync shell | Correct for `Wait-LoopDetached.ps1`. The shell remains attached to Copilot's task runtime and can trigger `shell_completed`. |
+| `mode: async` attached shell | Also correct for the waiter when the agent starts it that way. |
+| `detach: true`, `Start-Process`, `Start-Job`, or `&` | Not correct for the waiter. These remove the waiter from the tool-completion channel and turn the workflow into background handoff. |
+| `Start-LoopDetached.ps1` worker | Correctly detached from Copilot CLI. It owns durability, not notification. |
+
+The worker and waiter have different jobs:
+
+- The **worker** is durable and can survive normal agent idleness.
+- The **waiter** is observed and wakes the agent.
+
+If the waiter is interrupted, the worker can still be inspected and a new waiter can reattach to the same run directory. If the worker dies, the waiter should classify this as crashed/stalled/infrastructure failure and wake the agent.
+
+## V1 Scope
+
+### 1. Fix missing-helper durable fallback
+
+`Wait-LoopDetached.ps1` should not exit bare text code `3` simply because sibling `Get-LoopStatus.ps1` is unavailable. It should:
+
+1. Resolve and validate the run directory.
+2. Attempt helper-based status when the helper exists.
+3. If the helper is missing, throws, emits malformed output, or cannot classify, read durable files directly.
+4. Emit structured JSON with `waiter.exitReason = "status_read_fallback"` when durable classification succeeds.
+5. Emit structured infrastructure/status failure JSON when durable classification is impossible.
+
+### 2. Make watch-until-terminal timeout intent explicit
+
+The simplest robust answer to worker-timeout liveness loss is to avoid finite logical timeouts for watch-until-terminal workflows.
+
+Add a generic intent marker such as:
+
+```powershell
+.\scripts\Start-LoopDetached.ps1 `
+  -Name "long-watch" `
+  -WatchUntilTerminal `
+  -CheckCommand "<command>" `
+  -IntervalSeconds 300 `
+  -RetryExitCode 10 `
+  -StopExitCode 20,21,22
+```
+
+Proposed behavior:
+
+- `-WatchUntilTerminal` records `watchMode = "watch-until-terminal"` in `manifest.json`.
+- If `-TimeoutSeconds` was not explicitly supplied, `Start-LoopDetached.ps1` passes `TimeoutSeconds = 0`.
+- If `-TimeoutSeconds` is explicitly supplied, keep it but preserve the watch intent in the manifest so the waiter output can explain that a logical watch ended due to a configured finite timeout.
+- Existing finite timeout behavior remains available for bounded waits.
+
+This avoids adding a supervisor process and makes the safe long-watch mode explicit in command examples and skill guidance.
+
+### 3. Add structured `lastWake` metadata
+
+The loop framework should preserve the domain-provided reason and exit code without hard-coding domain semantics.
+
+Waiter output should include a generic shape:
 
 ```json
 {
-  "schemaVersion": 1,
-  "watchId": "long-watch-example",
-  "name": "long-watch-example",
-  "createdAt": "2026-05-25T20:00:00Z",
-  "updatedAt": "2026-05-25T20:05:00Z",
-  "state": "running",
-  "policy": {
-    "mode": "watch-until-terminal",
-    "renewOnWorkerTimeout": true,
-    "generationTimeoutSeconds": 43200,
-    "maxGenerations": 0
+  "state": "actionable",
+  "runDir": "C:\\Users\\...\\.copilot\\loop-runs\\long-watch-...",
+  "lastWake": {
+    "kind": "actionable",
+    "reason": "domain_event_requires_agent",
+    "exitCode": 31,
+    "summary": "The check detected work that requires agent reasoning",
+    "attempt": 136,
+    "detectedAt": "2026-05-25T19:58:31Z",
+    "eventPath": "events\\20260525T195831Z-actionable.json"
   },
-  "currentGeneration": {
-    "number": 2,
-    "runDir": "generations\\0002",
-    "startedAt": "2026-05-25T20:05:00Z"
-  },
-  "lastWakeReason": null,
-  "lastWake": null,
-  "supervisor": {
-    "pid": 1234,
-    "processStartTime": "2026-05-25T20:00:00Z",
-    "heartbeatAt": "2026-05-25T20:05:00Z"
-  },
-  "observer": {
-    "heartbeatAt": "2026-05-25T20:05:00Z",
-    "attached": true,
-    "shellId": null
-  },
-  "cleanup": {
-    "policy": "retain-current-and-failures",
-    "retentionDays": 7,
-    "maxCompletedGenerations": 2,
-    "lastAttemptAt": null,
-    "lastSuccessAt": null,
-    "status": "not_run"
+  "waiter": {
+    "exitReason": "wakeup_state",
+    "statusSource": "helper"
   }
 }
 ```
 
-## Watch States
+For the generic loop skill, `actionable` means "wake the agent and require inspection," not "the watch completed successfully." Domain skills decide their own stop codes and reason names.
 
-| State | Meaning | Agent behavior |
-|---|---|---|
-| `starting` | Watch root exists; supervisor or first generation is starting. | Keep waiting unless startup deadline passes. |
-| `running` | Supervisor and current worker generation are healthy. | Keep waiting. |
-| `rolling_over` | Generation ended by rollover policy; next generation is being started. | Keep waiting unless rollover fails. |
-| `actionable` | Current generation found an agent-reasoned event. | Wake agent, inspect event, act, ack, then restart/continue if needed. |
-| `final` | Logical terminal condition reached, such as merged/closed/success. | Wake agent and finish. |
-| `infrastructure_failure` | Supervisor cannot classify, renew, read status, or maintain liveness. | Wake agent; do not hide this as normal timeout. |
-| `abandoned` | User explicitly handed off or stopped the watch. | No automatic wakeup expected. |
+### 4. Add explicit safe cleanup
 
-## Rollover Semantics
-
-Generation terminal states are not always logical terminal states.
-
-| Generation result | Watch policy says | Watch result |
-|---|---|---|
-| Success/final business condition | Terminal | `final` |
-| Actionable stop code | Agent must act | `actionable` |
-| Timeout while still waiting | Renew on timeout | Start next generation |
-| Timeout while still waiting | No renewal | `final` with timeout |
-| Crash/no terminal event | Not recoverable automatically | `infrastructure_failure` |
-
-This avoids treating "12 hours elapsed while waiting" as "the logical watch is done."
-
-## Actionable Wakeup Observability
-
-The supervised design should make actionable wakeups unambiguous without encoding semantics for any particular check script. The loop framework should not decide what a domain event means; it should preserve the structured reason, exit code, summary, and event artifact supplied by the check.
-
-The design response is a generic watch contract:
-
-| Concern | Design response |
-|---|---|
-| External state updates between polls | Accept bounded polling latency; tune interval or add a domain-specific event source if lower latency is required. |
-| Actionable state displayed as generic success | Treat agent-reasoned events as `state = actionable`, not successful final completion. |
-| Shell notification cannot include dynamic output details | Ensure the final waiter JSON contains `lastWake.kind`, `lastWake.reason`, `lastWake.exitCode`, and `lastWake.summary`; the agent must read it after notification. |
-| Domain check exits with an ambiguous code | Preserve the check's exit code and reason; domain skills should choose stop codes that make their own actionable states clear. |
-
-Proposed `lastWake` shape:
-
-```json
-{
-  "kind": "actionable",
-  "reason": "domain_event_requires_agent",
-  "exitCode": 31,
-  "summary": "The check detected work that requires agent reasoning",
-  "generation": 3,
-  "attempt": 136,
-  "detectedAt": "2026-05-25T19:58:31Z",
-  "eventPath": "generations\\0003\\events\\20260525T195831Z-actionable.json"
-}
-```
-
-For the generic loop skill, `actionable` means "wake the agent and require inspection," not "the watch completed successfully." If an internal action command fully handles work and acks it atomically, that automation can exit `0`; otherwise, agent-reasoned work should remain a non-consuming actionable event.
-
-## Cleanup and Retention
-
-Cleanup should be supervisor-owned and conservative.
-
-Rules:
-
-1. Never delete the current generation.
-2. Never delete a generation whose PID and process start time still identify a live process.
-3. Keep actionable, failed, crashed, and infrastructure-failure generations until acknowledged or manually pruned.
-4. Keep the newest completed successful generations, default `maxCompletedGenerations = 2`.
-5. Delete older successful rollover generations after `retentionDays`, default `7`.
-6. In explicit background handoff mode, do not auto-clean unless cleanup was explicitly configured.
-7. If deletion fails because files are locked or status is ambiguous, skip and record `cleanup.status = "pending"`.
-
-Cleanup belongs at two levels:
-
-| Cleanup level | Owner | Purpose |
-|---|---|---|
-| Watch-local generation cleanup | Supervisor | Prune old successful generations inside one logical watch. |
-| Global orphan cleanup | Explicit command | Prune old standalone `$HOME\.copilot\loop-runs\` directories that are no longer active or useful. |
-
-Suggested helper:
+Add one cleanup script rather than embedding cleanup in a supervisor:
 
 ```powershell
 .\scripts\Invoke-LoopCleanup.ps1 `
-  -WatchRoot "$HOME\.copilot\loop-watches" `
   -RunRoot "$HOME\.copilot\loop-runs" `
   -RetentionDays 7 `
-  -MaxCompletedGenerations 2 `
+  -MaxCompletedRuns 50 `
   -WhatIf
 ```
 
-The helper should default to dry-run/WhatIf-like reporting for global cleanup. Destructive cleanup should require an explicit switch such as `-Apply`.
+Destructive cleanup requires `-Apply`.
 
-## Missing-helper Recovery
+Cleanup rules:
 
-The missing `Get-LoopStatus.ps1` case should be treated as a recoverable status-read failure whenever durable files can classify the run or watch. The waiter should:
+1. Never delete a run whose PID and process start time still identify a live process.
+2. Retain actionable, failed, crashed, stalled, and infrastructure-failure runs by default.
+3. Retain recent final-success runs for postmortem/debugging.
+4. Delete old final-success runs only after retention policy allows it.
+5. Skip ambiguous, malformed, or locked runs and report them.
+6. Never run automatic global cleanup as a side effect of waiting.
 
-1. Resolve and validate the run/watch directory.
-2. Attempt helper-based status.
-3. If helper is missing or malformed, read durable files directly.
-4. Emit JSON with a warning and `waiter.exitReason = "status_read_fallback"` when classification succeeds.
-5. Emit `infrastructure_failure` JSON when no durable classification is possible.
+### 5. Update docs and examples
 
-Bare text exit code `3` should not be the first response for an existing run directory with useful durable state.
+Docs should make the runner choice explicit:
 
-## Public Script Surface
-
-Candidate scripts:
-
-| Script | Purpose |
+| Use case | Recommended pattern |
 |---|---|
-| `Start-LoopObserved.ps1` | Start a logical watch, supervisor, and first worker generation. |
-| `Wait-LoopObserved.ps1` | Attached quiet waiter for a logical watch; emits one final JSON wakeup. |
-| `Get-LoopWatchStatus.ps1` | Manual status for watch root and current generation. |
-| `Invoke-LoopCleanup.ps1` | Conservative cleanup for watch generations and old orphan run dirs. |
+| Short bounded retry | Existing `loop.ps1` or detached run with finite timeout. |
+| Long watch where agent should continue | `Start-LoopDetached.ps1 -WatchUntilTerminal` + attached/backgrounded `Wait-LoopDetached.ps1`. |
+| User wants independent handoff | Start detached worker only; provide run dir and status command; do not imply automatic wakeup. |
+| Cleanup old scratch state | `Invoke-LoopCleanup.ps1 -WhatIf`, then `-Apply` after inspection. |
 
-Compatibility:
+## Deferred Scope
 
-- Existing `Start-LoopDetached.ps1`, `Wait-LoopDetached.ps1`, and `Get-LoopStatus.ps1` remain supported.
-- Simple waits can keep using detached worker + attached waiter.
-- Domain-specific long-running sentries, including PAW PR/re-review sentry, can opt into supervised observed watch.
+Defer these until a concrete failure remains after v1:
 
-## Documentation Changes
+- Separate detached supervisor process.
+- `loop-watches\<watch-id>\generations\NNNN\` directory tree.
+- `watch.json` as a second durable contract.
+- `Start-LoopObserved.ps1`, `Wait-LoopObserved.ps1`, and `Get-LoopWatchStatus.ps1`.
+- Automatic global orphan cleanup.
+- Worker self-renewal / generations on timeout.
 
-Update loop skill docs to distinguish:
+The design deliberately starts without these because they introduce another liveness owner, another heartbeat, another state hierarchy, and another source of false infrastructure failures.
 
-- **Observed watch**: attached/backgrounded waiter wakes the agent.
-- **Background handoff**: no waiter; user receives run/status command.
-- **Supervised observed watch**: logical watch with supervisor renewal and cleanup.
+## Failure Handling Matrix
 
-Document that Copilot CLI task backgrounding is appropriate for the waiter, while shell-side detaching the waiter is not.
+| Failure | V1 behavior |
+|---|---|
+| Helper missing | Waiter reads durable files directly and emits JSON. |
+| Durable files show actionable/final | Waiter wakes using durable fallback. |
+| Durable files are malformed or insufficient | Waiter emits infrastructure/status failure JSON. |
+| Worker reaches finite timeout in bounded mode | Waiter wakes with timeout/final state. |
+| Worker reaches finite timeout in explicit watch mode | Waiter wakes with clear metadata that the watch ended due to configured timeout. |
+| Worker process disappears without terminal event | Waiter wakes as crashed/infrastructure failure. |
+| Heartbeat goes stale repeatedly | Waiter wakes as stalled. |
+| Waiter is interrupted | User/agent can reattach with the same run directory. |
+| Copilot CLI session exits | Worker may continue, but automatic wakeup is lost; status remains recoverable from run directory. |
+| Old run dirs accumulate | Explicit cleanup reports and safely prunes eligible runs. |
 
 ## Test Plan
 
-Add tests for:
+### V1 tests
 
 - Missing `Get-LoopStatus.ps1` falls back to durable state and emits JSON.
-- Worker timeout while still waiting starts generation N+1 under renew-on-timeout policy.
-- Actionable event in any generation wakes the watcher and does not auto-ack.
-- Actionable wakeup is reported as `actionable` with the domain-provided reason, summary, event path, and exit code, not generic successful final completion.
-- Supervisor stale heartbeat wakes waiter with `infrastructure_failure`.
-- Cleanup skips active/current generation.
-- Cleanup retains actionable/failure/crashed generations.
-- Cleanup prunes old successful rollover generations after retention.
-- Explicit background handoff does not start waiter and does not imply automatic wakeup.
+- Helper malformed output falls back to durable state and emits JSON.
+- No classifiable durable state emits structured infrastructure/status failure.
+- `-WatchUntilTerminal` without explicit timeout records watch intent and starts worker with `TimeoutSeconds = 0`.
+- Explicit timeout with `-WatchUntilTerminal` is preserved and surfaced clearly in final waiter output.
+- Actionable event emits `lastWake.kind`, `lastWake.reason`, `lastWake.exitCode`, `lastWake.summary`, and `lastWake.eventPath`.
+- Cleanup `-WhatIf` reports eligible runs without deleting.
+- Cleanup `-Apply` skips live runs using PID + process start time.
+- Cleanup retains actionable/failure/crashed/stalled runs by default.
+- Cleanup prunes only eligible old final-success runs.
+
+### V2 tests if supervisor is later needed
+
+- Supervisor heartbeat stale detection.
+- Generation rollover rate limiting.
+- Watch/run state consistency.
+- Supervisor cleanup of older generations.
 
 ## Open Questions
 
-1. Should the watch root live under `$HOME\.copilot\loop-watches\` or should it reuse `$HOME\.copilot\loop-runs\` with a `watch.json` root?
-2. Should `Start-LoopObserved.ps1` launch a separate detached supervisor process in the first implementation, or should the first version put renewal in the attached waiter and accept weaker liveness if the waiter dies?
-3. What default retention is right for generic long watches: 7 days, 14 days, or count-only retention?
-4. Should global orphan cleanup ever run automatically, or only as an explicit user/agent command?
+1. Should the long-watch intent switch be named `-WatchUntilTerminal`, `-LongWatch`, or something else?
+2. Should `-WatchUntilTerminal` reject explicit finite `-TimeoutSeconds`, or allow it with clear final metadata?
+3. What default cleanup retention is right for generic final-success runs: 7 days, 14 days, count-only, or both?
+4. Should `Invoke-LoopCleanup.ps1` live in v1, or should v1 only document a cleanup command pattern first?
