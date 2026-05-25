@@ -44,11 +44,11 @@ Additional Inputs: planning-only human review is represented as a custom workflo
 ## Control State
 
 TODO Mirror: active-required-items
-Reconciliation: not_run
+Reconciliation: current
 
 ### Required Workflow Items
 - `init` | `resolved` | `activity`
-- `planning` | `pending` | `activity`
+- `planning` | `in_progress` | `activity`
 - `planning-docs-review` | `pending` | `activity`
 - `implementation` | `pending` | `activity`
 - `final-review` | `pending` | `activity`
