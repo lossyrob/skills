@@ -377,15 +377,15 @@ function New-LastWakeMetadata {
     $latestEvent = Get-JsonProperty -Object $Status -Name 'latestEvent'
     $latestEventTimestamp = Get-JsonProperty -Object $latestEvent -Name 'timestamp'
     $loopStatus = [string](Get-JsonProperty -Object $result -Name 'loopStatus')
-    $status = [string](Get-JsonProperty -Object $result -Name 'status')
+    $resultStatus = [string](Get-JsonProperty -Object $result -Name 'status')
     $event = [string](Get-JsonProperty -Object $result -Name 'event')
     $stdout = [string](Get-JsonProperty -Object $result -Name 'stdout')
     $summary = $stdout.Trim()
     if (-not $summary) {
         if ($event) {
             $summary = $event
-        } elseif ($status) {
-            $summary = $status
+        } elseif ($resultStatus) {
+            $summary = $resultStatus
         } else {
             $summary = $classification
         }
@@ -415,7 +415,7 @@ function New-LastWakeMetadata {
         classification = $classification
         exitCode = $exitCode
         loopStatus = if ($loopStatus) { $loopStatus } else { $null }
-        status = if ($status) { $status } else { $null }
+        status = if ($resultStatus) { $resultStatus } else { $null }
         event = if ($event) { $event } else { $null }
         summary = if ($summary) { $summary } else { $null }
         attempt = ConvertTo-NullableInt -Value (Get-JsonProperty -Object $result -Name 'attempt')

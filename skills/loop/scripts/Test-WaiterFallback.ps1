@@ -165,6 +165,8 @@ Assert-Case 'helper-throws + actionable last-result + matching event => status_r
     if ($obj.lastWake.kind -ne 'actionable') { throw "expected lastWake.kind actionable, got '$($obj.lastWake.kind)'" }
     if ($obj.lastWake.exitCode -ne 23) { throw "expected lastWake.exitCode 23, got '$($obj.lastWake.exitCode)'" }
     if ($obj.lastWake.event -ne 'rereview_requested') { throw "expected lastWake.event rereview_requested, got '$($obj.lastWake.event)'" }
+    if (-not $obj.lastWake.eventPath) { throw "expected lastWake.eventPath to be populated" }
+    if (-not $obj.lastWake.detectedAt) { throw "expected lastWake.detectedAt to be populated" }
 }
 
 # ----------------------------------------------------------------------------
@@ -194,6 +196,7 @@ Assert-Case 'missing helper + actionable last-result + matching event => status_
     if ($obj.classification -ne 'actionable') { throw "expected classification='actionable', got '$($obj.classification)'" }
     if (-not $obj.lastWake) { throw "expected lastWake metadata" }
     if ($obj.lastWake.exitCode -ne 31) { throw "expected lastWake.exitCode 31, got '$($obj.lastWake.exitCode)'" }
+    if (-not $obj.lastWake.eventPath) { throw "expected lastWake.eventPath to be populated" }
 }
 
 # ----------------------------------------------------------------------------
@@ -224,6 +227,32 @@ Assert-Case 'helper-empty + terminal success => status_read_fallback (exit 0)' {
     if (-not $obj.lastWake) { throw "expected lastWake metadata" }
     if ($obj.lastWake.kind -ne 'final') { throw "expected lastWake.kind final, got '$($obj.lastWake.kind)'" }
     if ($obj.lastWake.exitCode -ne 0) { throw "expected lastWake.exitCode 0, got '$($obj.lastWake.exitCode)'" }
+    if (-not $obj.lastWake.eventPath) { throw "expected lastWake.eventPath to be populated" }
+}
+
+# ----------------------------------------------------------------------------
+# Case 2b: helper throws + final last-result without result timestamp/event.
+# lastWake.detectedAt must still fall back to the status object's timestamp.
+# ----------------------------------------------------------------------------
+Assert-Case 'helper-throws + final last-result without event => lastWake detectedAt from status timestamp' {
+    $waiterDir = New-TestWaiterDir -StubBody $throwStub
+    $runDir = New-TestRunDir
+    $script:cleanups += $waiterDir, $runDir
+
+    [ordered]@{
+        loopStatus = 'success'
+        status = 'SUCCESS'
+        event = 'completed'
+        terminal = $true
+        stdout = ''
+        checkExitCode = 0
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDir 'last-result.json') -Encoding utf8
+
+    $r = Invoke-Waiter -WaiterDir $waiterDir -RunDir $runDir
+    if ($r.ExitCode -ne 0) { throw "expected exit 0 (final success), got $($r.ExitCode). stdout: $($r.Stdout)" }
+    $obj = $r.Stdout | ConvertFrom-Json
+    if ($obj.classification -ne 'final') { throw "expected classification='final', got '$($obj.classification)'" }
+    if (-not $obj.lastWake.detectedAt) { throw "expected lastWake.detectedAt fallback to status timestamp" }
 }
 
 # ----------------------------------------------------------------------------
