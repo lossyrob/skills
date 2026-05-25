@@ -55,6 +55,13 @@ function New-TestWaiterDir {
     return $dir
 }
 
+function New-TestWaiterDirWithoutStatusHelper {
+    $dir = Join-Path $env:TEMP ("waiter-test-bin-{0:N}" -f ([guid]::NewGuid()))
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Copy-Item -LiteralPath $srcWaiter -Destination $dir
+    return $dir
+}
+
 function Invoke-Waiter {
     param(
         [Parameter(Mandatory)][string]$WaiterDir,
@@ -154,6 +161,39 @@ Assert-Case 'helper-throws + actionable last-result + matching event => status_r
     if (-not ($obj.waiterFallbackDurableSources -contains 'lastResult')) { throw "expected lastResult in waiterFallbackDurableSources" }
     if (-not ($obj.waiterFallbackDurableSources -contains 'latestEvent')) { throw "expected latestEvent in waiterFallbackDurableSources" }
     if ($obj.lastResult.event -ne 'rereview_requested') { throw "lastResult.event not preserved" }
+    if (-not $obj.lastWake) { throw "expected lastWake metadata" }
+    if ($obj.lastWake.kind -ne 'actionable') { throw "expected lastWake.kind actionable, got '$($obj.lastWake.kind)'" }
+    if ($obj.lastWake.exitCode -ne 23) { throw "expected lastWake.exitCode 23, got '$($obj.lastWake.exitCode)'" }
+    if ($obj.lastWake.event -ne 'rereview_requested') { throw "expected lastWake.event rereview_requested, got '$($obj.lastWake.event)'" }
+}
+
+# ----------------------------------------------------------------------------
+# Case 1b: status helper missing entirely, last-result.json has actionable event.
+# This is the missing-helper RCA: no bare-text exit 3 is allowed.
+# ----------------------------------------------------------------------------
+Assert-Case 'missing helper + actionable last-result + matching event => status_read_fallback (actionable)' {
+    $waiterDir = New-TestWaiterDirWithoutStatusHelper
+    $runDir = New-TestRunDir
+    $script:cleanups += $waiterDir, $runDir
+
+    $actionableResult = @{
+        loopStatus = 'actionable'
+        status = 'ACTION'
+        event = 'domain_event_requires_agent'
+        terminal = $true
+        stdout = '{"status":"ACTION","event":"domain_event_requires_agent"}'
+        checkExitCode = 31
+    }
+    Add-LastResult -RunDir $runDir -Result $actionableResult
+    Add-Event -RunDir $runDir -Result $actionableResult
+
+    $r = Invoke-Waiter -WaiterDir $waiterDir -RunDir $runDir
+    if ($r.ExitCode -ne 31) { throw "expected exit 31 (actionable checkExitCode), got $($r.ExitCode). stdout: $($r.Stdout)" }
+    $obj = $r.Stdout | ConvertFrom-Json
+    if ($obj.waiter.exitReason -ne 'status_read_fallback') { throw "expected waiter.exitReason='status_read_fallback', got '$($obj.waiter.exitReason)'" }
+    if ($obj.classification -ne 'actionable') { throw "expected classification='actionable', got '$($obj.classification)'" }
+    if (-not $obj.lastWake) { throw "expected lastWake metadata" }
+    if ($obj.lastWake.exitCode -ne 31) { throw "expected lastWake.exitCode 31, got '$($obj.lastWake.exitCode)'" }
 }
 
 # ----------------------------------------------------------------------------
@@ -181,6 +221,9 @@ Assert-Case 'helper-empty + terminal success => status_read_fallback (exit 0)' {
     $obj = $r.Stdout | ConvertFrom-Json
     if ($obj.waiter.exitReason -ne 'status_read_fallback') { throw "expected status_read_fallback, got '$($obj.waiter.exitReason)'" }
     if ($obj.classification -ne 'final') { throw "expected classification='final', got '$($obj.classification)'" }
+    if (-not $obj.lastWake) { throw "expected lastWake metadata" }
+    if ($obj.lastWake.kind -ne 'final') { throw "expected lastWake.kind final, got '$($obj.lastWake.kind)'" }
+    if ($obj.lastWake.exitCode -ne 0) { throw "expected lastWake.exitCode 0, got '$($obj.lastWake.exitCode)'" }
 }
 
 # ----------------------------------------------------------------------------

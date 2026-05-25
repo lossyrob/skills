@@ -63,6 +63,12 @@ function Get-JsonProperty {
     if ($null -eq $Object) {
         return $null
     }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if ($Object.Contains($Name)) {
+            return $Object[$Name]
+        }
+        return $null
+    }
     $property = $Object.PSObject.Properties[$Name]
     if ($property) {
         return $property.Value
@@ -339,6 +345,95 @@ function Get-WaiterExitCode {
     }
 }
 
+function ConvertTo-NullableInt {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) {
+        return $null
+    }
+    $text = ([string]$Value).Trim()
+    if (-not $text) {
+        return $null
+    }
+    $parsed = 0
+    if ([int]::TryParse($text, [ref]$parsed)) {
+        return $parsed
+    }
+    return $null
+}
+
+function New-LastWakeMetadata {
+    param([Parameter(Mandatory = $true)][object]$Status)
+
+    $classification = ([string](Get-JsonProperty -Object $Status -Name 'classification')).ToLowerInvariant()
+    if ($classification -notin @('actionable', 'final')) {
+        return $null
+    }
+
+    $result = Get-StatusResult -Status $Status
+    if ($null -eq $result) {
+        return $null
+    }
+
+    $latestEvent = Get-JsonProperty -Object $Status -Name 'latestEvent'
+    $latestEventTimestamp = Get-JsonProperty -Object $latestEvent -Name 'timestamp'
+    $loopStatus = [string](Get-JsonProperty -Object $result -Name 'loopStatus')
+    $status = [string](Get-JsonProperty -Object $result -Name 'status')
+    $event = [string](Get-JsonProperty -Object $result -Name 'event')
+    $stdout = [string](Get-JsonProperty -Object $result -Name 'stdout')
+    $summary = $stdout.Trim()
+    if (-not $summary) {
+        if ($event) {
+            $summary = $event
+        } elseif ($status) {
+            $summary = $status
+        } else {
+            $summary = $classification
+        }
+    }
+
+    $checkExitCode = ConvertTo-NullableInt -Value (Get-JsonProperty -Object $result -Name 'checkExitCode')
+    $exitCode = $checkExitCode
+    if ($classification -eq 'actionable') {
+        if ($null -eq $exitCode -or $exitCode -le 0) {
+            $exitCode = $ExitGeneral
+        }
+    } elseif ($classification -eq 'final') {
+        switch ($loopStatus.ToLowerInvariant()) {
+            'success' { $exitCode = 0 }
+            'action_completed' { $exitCode = 0 }
+            'timeout' { $exitCode = $ExitLoopTimeout }
+            default {
+                if ($null -eq $exitCode) {
+                    $exitCode = $ExitGeneral
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]([ordered]@{
+        kind = $classification
+        classification = $classification
+        exitCode = $exitCode
+        loopStatus = if ($loopStatus) { $loopStatus } else { $null }
+        status = if ($status) { $status } else { $null }
+        event = if ($event) { $event } else { $null }
+        summary = if ($summary) { $summary } else { $null }
+        attempt = ConvertTo-NullableInt -Value (Get-JsonProperty -Object $result -Name 'attempt')
+        detectedAt = if (Get-JsonProperty -Object $result -Name 'timestamp') {
+            [string](Get-JsonProperty -Object $result -Name 'timestamp')
+        } elseif ($latestEventTimestamp) {
+            [string]$latestEventTimestamp
+        } else {
+            [string](Get-JsonProperty -Object $Status -Name 'timestamp')
+        }
+        eventPath = if (Get-JsonProperty -Object $Status -Name 'latestEventPath') {
+            [string](Get-JsonProperty -Object $Status -Name 'latestEventPath')
+        } else {
+            $null
+        }
+    })
+}
+
 function Add-WaiterMetadata {
     param(
         [Parameter(Mandatory = $true)][object]$Status,
@@ -365,6 +460,10 @@ function Add-WaiterMetadata {
         exitReason = $ExitReason
     }
     $Status | Add-Member -NotePropertyName waiter -NotePropertyValue ([pscustomobject]$metadata) -Force
+    $lastWake = New-LastWakeMetadata -Status $Status
+    if ($null -ne $lastWake) {
+        $Status | Add-Member -NotePropertyName lastWake -NotePropertyValue $lastWake -Force
+    }
     return $Status
 }
 
@@ -420,10 +519,6 @@ function Write-StatusAndExit {
 }
 
 $statusScript = Join-Path $PSScriptRoot 'Get-LoopStatus.ps1'
-if (-not (Test-Path -LiteralPath $statusScript -PathType Leaf)) {
-    Write-WaiterError "Missing detached loop status script: $statusScript"
-    exit $ExitNoCommand
-}
 
 try {
     $resolvedRunDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($RunDir)
