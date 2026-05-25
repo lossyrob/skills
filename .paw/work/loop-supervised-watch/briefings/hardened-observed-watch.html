@@ -330,7 +330,7 @@
             <tr><td>Detached supervisor process</td><td><span class="tag bad">Deferred</span><br>Do not add in v1.</td><td>Adds another liveness owner, heartbeat, PID check, and possible false infrastructure failure.</td></tr>
             <tr><td>Watch root and generations</td><td><span class="tag bad">Deferred</span><br>Reuse existing run directory.</td><td>Generations double the durable state surface before evidence shows they are necessary.</td></tr>
             <tr><td>New observed script family</td><td><span class="tag bad">Deferred</span><br>Harden existing scripts.</td><td>Keeps the skill's selection matrix small and reduces user/agent confusion.</td></tr>
-            <tr><td>Supervisor cleanup</td><td><span class="tag good">Simplified</span><br>Use explicit cleanup command.</td><td>Cleanup should be conservative, inspectable, and never a hidden side effect of waiting.</td></tr>
+            <tr><td>Supervisor cleanup</td><td><span class="tag good">Simplified</span><br>Use explicit cleanup command plus agent TODO.</td><td>Cleanup should be conservative, inspectable, and visible as workflow work, never a hidden side effect of waiting.</td></tr>
           </tbody>
         </table>
       </div>
@@ -341,7 +341,7 @@
           <div class="mini"><span class="tag good">1</span><br><b>Missing-helper fallback</b><br>Waiter reads durable files directly and emits JSON instead of bare text failure.</div>
           <div class="mini"><span class="tag good">2</span><br><b>Watch-until-terminal intent</b><br><code>-WatchUntilTerminal</code> records intent and defaults worker timeout to unbounded.</div>
           <div class="mini"><span class="tag good">3</span><br><b>Structured wakeups</b><br><code>lastWake</code> preserves domain reason, exit code, summary, attempt, timestamp, and event path.</div>
-          <div class="mini"><span class="tag good">4</span><br><b>Safe cleanup</b><br><code>Invoke-LoopCleanup.ps1</code> reports by default and deletes only with <code>-Apply</code>.</div>
+          <div class="mini"><span class="tag good">4</span><br><b>Safe cleanup</b><br><code>Invoke-LoopCleanup.ps1</code> reports by default, deletes only with <code>-Apply</code>, and is tracked by an agent cleanup TODO.</div>
         </div>
       </div>
     </section>
@@ -359,6 +359,7 @@
             <tr><td>Finite timeout explicitly set in watch mode</td><td>Waiter makes the configured timeout obvious in final metadata.</td></tr>
             <tr><td>Waiter interrupted</td><td>Reattach a new waiter to the same run directory.</td></tr>
             <tr><td>Copilot CLI exits</td><td>Automatic wakeup is lost, but worker state remains recoverable from disk.</td></tr>
+            <tr><td>Agent skips cleanup</td><td>Long-watch guidance requires an explicit cleanup TODO before final response or handoff.</td></tr>
           </tbody>
         </table>
       </div>
@@ -375,6 +376,16 @@
         </table>
         <div class="callout blue"><strong>Practical standard:</strong> fail loudly with recoverable state rather than attempting silent self-healing through another autonomous process.</div>
       </div>
+    </section>
+
+    <section class="card">
+      <h2>Who runs cleanup?</h2>
+      <div class="grid three">
+        <div class="mini"><b>Agent obligation</b><br>Create a <code>loop-cleanup:&lt;id&gt;</code> TODO when starting or finishing a long detached watch.</div>
+        <div class="mini"><b>Two-step command</b><br>Run <code>Invoke-LoopCleanup.ps1 -WhatIf</code>, inspect it, then use <code>-Apply</code> only for safe eligible runs.</div>
+        <div class="mini"><b>Done criteria</b><br>Deleted safe final-success runs, found nothing eligible, or recorded an intentional skip for ambiguous/useful runs.</div>
+      </div>
+      <div class="callout"><strong>Not automatic:</strong> worker and waiter never delete as a side effect. The agent is instructed to make cleanup visible and complete before final response or PR handoff.</div>
     </section>
 
     <section class="card">

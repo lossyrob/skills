@@ -169,6 +169,22 @@ Add one cleanup script rather than embedding cleanup in a supervisor:
 
 Destructive cleanup requires `-Apply`.
 
+Cleanup should be an **agent obligation**, not a user-maintenance hope. The loop skill should instruct agents to create and complete an explicit cleanup TODO whenever they start a long watch or complete a workflow that used detached loop runs. The TODO keeps cleanup visible across long waits and prevents the agent from skipping directly from "watch finished" to final response.
+
+Recommended TODO shape:
+
+```text
+loop-cleanup:<watch-or-work-id>
+Title: Cleaning old loop run directories
+Description: Run Invoke-LoopCleanup.ps1 with -WhatIf, inspect the report, then run -Apply if only eligible final-success runs would be deleted. Do not delete live, actionable, failed, crashed, stalled, infrastructure-failure, ambiguous, or locked runs.
+```
+
+The cleanup TODO should be considered done only after one of these outcomes:
+
+- Cleanup ran with `-Apply` and reported only safe deletions/skips.
+- `-WhatIf` found no eligible runs to delete.
+- Cleanup found ambiguous or diagnostically useful runs, and the agent recorded that cleanup was intentionally skipped.
+
 Cleanup rules:
 
 1. Never delete a run whose PID and process start time still identify a live process.
@@ -177,6 +193,7 @@ Cleanup rules:
 4. Delete old final-success runs only after retention policy allows it.
 5. Skip ambiguous, malformed, or locked runs and report them.
 6. Never run automatic global cleanup as a side effect of waiting.
+7. For agent-managed workflows, create the cleanup TODO before or immediately after starting the long watch, and resolve it before final response or PR handoff.
 
 ### 5. Update docs and examples
 
@@ -188,6 +205,8 @@ Docs should make the runner choice explicit:
 | Long watch where agent should continue | `Start-LoopDetached.ps1 -WatchUntilTerminal` + attached/backgrounded `Wait-LoopDetached.ps1`. |
 | User wants independent handoff | Start detached worker only; provide run dir and status command; do not imply automatic wakeup. |
 | Cleanup old scratch state | `Invoke-LoopCleanup.ps1 -WhatIf`, then `-Apply` after inspection. |
+
+Docs should also add an agent guardrail: for long detached watches, create todos for event handling, ack/restart, and cleanup. Cleanup is not part of the polling loop itself; it is a required wrap-up task for the agent-managed workflow.
 
 ## Deferred Scope
 
@@ -216,6 +235,7 @@ The design deliberately starts without these because they introduce another live
 | Waiter is interrupted | User/agent can reattach with the same run directory. |
 | Copilot CLI session exits | Worker may continue, but automatic wakeup is lost; status remains recoverable from run directory. |
 | Old run dirs accumulate | Explicit cleanup reports and safely prunes eligible runs. |
+| Agent might skip cleanup | Long-watch guidance requires a cleanup TODO and final check before response/handoff. |
 
 ## Test Plan
 
@@ -231,6 +251,7 @@ The design deliberately starts without these because they introduce another live
 - Cleanup `-Apply` skips live runs using PID + process start time.
 - Cleanup retains actionable/failure/crashed/stalled runs by default.
 - Cleanup prunes only eligible old final-success runs.
+- Long-watch docs require an explicit cleanup TODO before final response/handoff.
 
 ### V2 tests if supervisor is later needed
 
