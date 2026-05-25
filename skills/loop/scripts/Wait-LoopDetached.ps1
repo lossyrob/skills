@@ -138,6 +138,150 @@ function Test-DetachedActionConfigured {
     }
 }
 
+function Get-LatestLoopEventFromDir {
+    param([Parameter(Mandatory = $true)][string]$EventDir)
+    $empty = [pscustomobject]@{ File = $null; Event = $null; Timestamp = $null; Terminal = $false }
+    if (-not (Test-Path -LiteralPath $EventDir -PathType Container)) {
+        return $empty
+    }
+    $candidates = @()
+    foreach ($file in Get-ChildItem -LiteralPath $EventDir -Filter '*.json' -File -ErrorAction SilentlyContinue) {
+        try {
+            $event = Read-JsonFile -Path $file.FullName
+        } catch {
+            continue
+        }
+        if (-not $event) { continue }
+        $resultObj = Get-JsonProperty -Object $event -Name 'result'
+        $terminal = [bool](Get-JsonProperty -Object $resultObj -Name 'terminal')
+        $tsRaw = Get-JsonProperty -Object $event -Name 'timestamp'
+        $ts = $null
+        if ($tsRaw) {
+            try { $ts = [datetime]::Parse([string]$tsRaw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal) } catch { $ts = $null }
+        }
+        if (-not $ts) { $ts = $file.LastWriteTimeUtc }
+        $candidates += [pscustomobject]@{ File = $file; Event = $event; Timestamp = $ts; Terminal = $terminal }
+    }
+    if ($candidates.Count -eq 0) { return $empty }
+    return $candidates |
+        Sort-Object @{ Expression = { $_.Timestamp }; Descending = $true }, @{ Expression = { $_.Terminal }; Descending = $true }, @{ Expression = { $_.File.Name }; Descending = $true } |
+        Select-Object -First 1
+}
+
+function Get-DurableLoopFallback {
+    <#
+    .SYNOPSIS
+    Reconstructs a Get-LoopStatus.ps1-shaped status object by reading the
+    detached run directory's durable files directly. Used as a recovery
+    path when invoking Get-LoopStatus.ps1 fails for any reason (missing,
+    not invokable, transient I/O error, malformed JSON, etc.).
+
+    Mirrors the classification subset that Get-LoopStatus.ps1 derives from
+    latestEvent + lastResult: actionable / final / crashed / unknown.
+    Heartbeat-driven classifications (running / stalled / starting) are not
+    reproduced because they require live process state that this fallback
+    is not authoritative about.
+
+    Returns $null when the run directory contains no usable durable state.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$ResolvedRunDir,
+        [Parameter(Mandatory = $true)][ref]$Sources
+    )
+
+    $sourcesUsed = @()
+    $manifestPath = Join-Path $ResolvedRunDir 'manifest.json'
+    $lastResultPath = Join-Path $ResolvedRunDir 'last-result.json'
+    $heartbeatPath = Join-Path $ResolvedRunDir 'heartbeat.json'
+    $eventDir = Join-Path $ResolvedRunDir 'events'
+
+    $manifest = $null
+    try { $manifest = Read-JsonFile -Path $manifestPath } catch { $manifest = $null }
+
+    # Allow manifest to redirect file locations the way Get-LoopStatus does.
+    if ($manifest) {
+        $manifestLastResult = [string](Get-JsonProperty -Object $manifest -Name 'lastResultPath')
+        if (-not [string]::IsNullOrWhiteSpace($manifestLastResult) -and (Test-Path -LiteralPath $manifestLastResult -PathType Leaf)) {
+            $lastResultPath = $manifestLastResult
+        }
+        $manifestHeartbeat = [string](Get-JsonProperty -Object $manifest -Name 'heartbeatPath')
+        if (-not [string]::IsNullOrWhiteSpace($manifestHeartbeat) -and (Test-Path -LiteralPath $manifestHeartbeat -PathType Leaf)) {
+            $heartbeatPath = $manifestHeartbeat
+        }
+        $manifestEventDir = [string](Get-JsonProperty -Object $manifest -Name 'eventDir')
+        if (-not [string]::IsNullOrWhiteSpace($manifestEventDir) -and (Test-Path -LiteralPath $manifestEventDir -PathType Container)) {
+            $eventDir = $manifestEventDir
+        }
+    }
+
+    $lastResult = $null
+    try {
+        $lastResult = Read-JsonFile -Path $lastResultPath
+        if ($lastResult) { $sourcesUsed += 'lastResult' }
+    } catch {
+        # Best-effort: surface in waiter metadata, do not block fallback.
+    }
+
+    $heartbeat = $null
+    try { $heartbeat = Read-JsonFile -Path $heartbeatPath } catch { $heartbeat = $null }
+
+    $latestEvent = $null
+    $latestEventFile = $null
+    $eventCandidate = Get-LatestLoopEventFromDir -EventDir $eventDir
+    if ($eventCandidate -and $eventCandidate.Event) {
+        $latestEvent = $eventCandidate.Event
+        $latestEventFile = $eventCandidate.File
+        $sourcesUsed += 'latestEvent'
+    }
+
+    # If nothing durable, give up.
+    if (-not $lastResult -and -not $latestEvent -and -not $manifest -and -not $heartbeat) {
+        $Sources.Value = @()
+        return $null
+    }
+
+    # Derive classification from latestEvent.result (preferred) or lastResult.
+    $classification = 'unknown'
+    $sourceResult = $null
+    if ($latestEvent) {
+        $sourceResult = Get-JsonProperty -Object $latestEvent -Name 'result'
+    }
+    if (-not $sourceResult -and $lastResult) {
+        $sourceResult = $lastResult
+    }
+    if ($sourceResult) {
+        $loopStatusText = ([string](Get-JsonProperty -Object $sourceResult -Name 'loopStatus')).ToLowerInvariant()
+        $terminal = [bool](Get-JsonProperty -Object $sourceResult -Name 'terminal')
+        if ($loopStatusText -eq 'actionable') {
+            $classification = 'actionable'
+        } elseif ($terminal) {
+            $classification = 'final'
+        }
+    }
+
+    $Sources.Value = $sourcesUsed
+
+    return [ordered]@{
+        schemaVersion = 1
+        timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+        runDir = $ResolvedRunDir
+        pid = if ($manifest) { Get-JsonProperty -Object $manifest -Name 'pid' } else { $null }
+        processAlive = $null
+        processExists = $null
+        classification = $classification
+        recoveredFromDurableFiles = $true
+        manifestPath = $manifestPath
+        lastResultPath = $lastResultPath
+        heartbeatPath = $heartbeatPath
+        eventDir = $eventDir
+        latestEventPath = if ($latestEventFile) { $latestEventFile.FullName } else { $null }
+        manifest = $manifest
+        heartbeat = $heartbeat
+        lastResult = $lastResult
+        latestEvent = $latestEvent
+    } | ForEach-Object { [pscustomobject]$_ }
+}
+
 function Get-WaiterExitCode {
     param(
         [Parameter(Mandatory = $true)][object]$Status,
@@ -369,20 +513,75 @@ while ($true) {
         Start-Sleep -Seconds $sleepSeconds
     } catch {
         # Always emit a JSON status object instead of bare-text failure, so the
-        # invoking agent can parse the waiter response uniformly. Earlier the
-        # bare-text path masked a worker that had already finalized: the
-        # underlying loop's last-result.json was already on disk, but the
-        # waiter died before propagating it. Build a best-effort status from
-        # (in order): the most recent successful status read, a direct read
-        # of last-result.json from the run directory, or a minimal stub.
+        # invoking agent can parse the waiter response uniformly.
+        #
+        # Recovery strategy (durable-first per the source-of-truth invariant:
+        # the detached loop run directory is authoritative, the attached
+        # waiter is only a transport/wakeup mechanism):
+        #
+        #   1. Read durable run-directory files (manifest, last-result, events)
+        #      directly via Get-DurableLoopFallback. If they yield an
+        #      actionable or final classification, classify and exit through
+        #      the normal Get-WaiterExitCode / Write-StatusAndExit path with
+        #      waiter.exitReason = 'status_read_fallback'. This is the path
+        #      that recovers a missed re-review / approval / +1 etc. that the
+        #      worker already finalized but the helper-based status read
+        #      could not surface.
+        #
+        #   2. If the durable read did not yield a usable classification,
+        #      fall back to the most recent good in-memory status from a
+        #      prior poll, then to a minimal stub. In either case emit JSON
+        #      with waiter.exitReason = 'waiter_internal_error' and exit
+        #      ExitWaiterInternalError (121).
+        #
+        # Only emit a bare-text failure if even building the JSON fails.
         $waiterError = $_.Exception.Message
-        $fallbackStatus = $lastStatus
-        $fallbackSource = if ($null -ne $fallbackStatus) { 'previous_status_read' } else { $null }
-        if ($null -eq $fallbackStatus) {
+        $waiterErrors = @($waiterError)
+
+        $fallbackSourcesRef = [ref]@()
+        $durableStatus = $null
+        try {
+            $durableStatus = Get-DurableLoopFallback -ResolvedRunDir $resolvedRunDir -Sources $fallbackSourcesRef
+        } catch {
+            $waiterErrors += "durable fallback read failed: $($_.Exception.Message)"
+        }
+        $durableSources = @($fallbackSourcesRef.Value)
+
+        if ($durableStatus) {
+            $durableClassification = ([string](Get-JsonProperty -Object $durableStatus -Name 'classification')).ToLowerInvariant()
+            if ($durableClassification -in @('actionable', 'final')) {
+                # Recovered a real lifecycle event from durable state — exit
+                # through the normal path so the agent sees the same JSON
+                # shape and exit code it would have gotten on a clean read.
+                try {
+                    $exitCode = Get-WaiterExitCode -Status $durableStatus -Classification $durableClassification
+                    $statusWithWaiter = Add-WaiterMetadata -Status $durableStatus -StartedAtUtc $startedAt -PollCount $pollCount -ExitReason 'status_read_fallback' -ConsecutiveStalledPolls $consecutiveStalledPolls
+                    $statusWithWaiter | Add-Member -NotePropertyName waiterFallbackSource -NotePropertyValue 'durable_files' -Force
+                    $statusWithWaiter | Add-Member -NotePropertyName waiterFallbackDurableSources -NotePropertyValue $durableSources -Force
+                    $statusWithWaiter | Add-Member -NotePropertyName waiterErrors -NotePropertyValue $waiterErrors -Force
+                    Write-StatusAndExit -Status $statusWithWaiter -ExitCode $exitCode
+                } catch {
+                    $waiterErrors += "durable fallback exit path failed: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        # Durable read either yielded nothing usable or its exit path
+        # itself failed. Build a best-effort status for the internal-error
+        # path, preferring the most recent good in-memory status, then the
+        # durable status (even if unclassified), then a minimal stub.
+        if ($null -ne $lastStatus) {
+            $fallbackStatus = $lastStatus
+            $fallbackSource = 'previous_status_read'
+        } elseif ($null -ne $durableStatus) {
+            $fallbackStatus = $durableStatus
+            $fallbackSource = 'durable_files_unclassified'
+        } else {
+            $directLastResult = $null
             try {
                 $directLastResult = Read-JsonFile -Path (Join-Path $resolvedRunDir 'last-result.json')
             } catch {
-                $directLastResult = $null
+                # Already recorded above when Get-DurableLoopFallback ran.
             }
             $fallbackStatus = [pscustomobject]@{
                 runDir = $resolvedRunDir
@@ -396,7 +595,6 @@ while ($true) {
         try {
             $statusWithWaiter = Add-WaiterMetadata -Status $fallbackStatus -StartedAtUtc $startedAt -PollCount $pollCount -ExitReason 'waiter_internal_error' -ConsecutiveStalledPolls $consecutiveStalledPolls
         } catch {
-            # If even metadata wrap fails, fall through to bare-text exit below.
             Write-WaiterError "waiter failed: $waiterError"
             Write-WaiterError "waiter recovery also failed: $($_.Exception.Message)"
             exit $ExitWaiterInternalError
@@ -404,6 +602,10 @@ while ($true) {
 
         $statusWithWaiter | Add-Member -NotePropertyName waiterError -NotePropertyValue $waiterError -Force
         $statusWithWaiter | Add-Member -NotePropertyName waiterFallbackSource -NotePropertyValue $fallbackSource -Force
+        $statusWithWaiter | Add-Member -NotePropertyName waiterErrors -NotePropertyValue $waiterErrors -Force
+        if ($durableSources.Count -gt 0) {
+            $statusWithWaiter | Add-Member -NotePropertyName waiterFallbackDurableSources -NotePropertyValue $durableSources -Force
+        }
         Write-StatusAndExit -Status $statusWithWaiter -ExitCode $ExitWaiterInternalError
     }
 }
