@@ -321,6 +321,40 @@ function Test-LoopBodyContains {
   return ([string]$Body).IndexOf($Marker, [StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
+function Remove-LoopLeadingDecoration {
+  param(
+    [Parameter(Mandatory)]
+    [string]$Text
+  )
+
+  if ([string]::IsNullOrEmpty($Text)) {
+    return $Text
+  }
+
+  # Skip a bounded leading run of non-ASCII or non-alphanumeric ASCII characters
+  # so the ASCII portion of a PAW marker still matches even when the leading
+  # emoji has been corrupted into mojibake (e.g., the 4 UTF-8 bytes of U+1F43E
+  # rendered as '≡ƒÉ╛' via cp437 or 'ðŸ¾' via cp1252 by a non-UTF-8 console),
+  # or when the body starts with a different decorative emoji entirely. The
+  # 8-code-unit bound prevents this from drifting into legitimate body text.
+  $maxSkip = [Math]::Min(8, $Text.Length)
+  $i = 0
+  while ($i -lt $maxSkip) {
+    $c = $Text[$i]
+    $code = [int]$c
+    if ($code -lt 0x80 -and [char]::IsLetterOrDigit($c)) {
+      break
+    }
+    $i++
+  }
+
+  if ($i -eq 0) {
+    return $Text
+  }
+
+  return $Text.Substring($i).TrimStart()
+}
+
 function Test-LoopBodyStartsWithMarker {
   param(
     [AllowNull()]
@@ -340,13 +374,8 @@ function Test-LoopBodyStartsWithMarker {
     return $false
   }
 
-  $pawPrints = [System.Char]::ConvertFromUtf32(0x1F43E)
-  if ($text.StartsWith($pawPrints, [StringComparison]::Ordinal)) {
-    $text = $text.Substring($pawPrints.Length).TrimStart()
-  }
-  if ($markerText.StartsWith($pawPrints, [StringComparison]::Ordinal)) {
-    $markerText = $markerText.Substring($pawPrints.Length).TrimStart()
-  }
+  $text       = Remove-LoopLeadingDecoration -Text $text
+  $markerText = Remove-LoopLeadingDecoration -Text $markerText
 
   if (-not $text.StartsWith($markerText, [StringComparison]::OrdinalIgnoreCase)) {
     return $false
