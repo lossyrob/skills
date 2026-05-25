@@ -17,13 +17,14 @@ The plan directly addresses the known reliability gaps:
   - Move missing `Get-LoopStatus.ps1` handling into the durable fallback path instead of exiting bare text code `3`.
   - Ensure helper missing, helper throws, helper empty output, and helper malformed output all produce structured JSON when durable state can be classified.
   - Add generic `lastWake` metadata to waiter output for actionable/final wakeups, preserving domain-provided reason/event, exit code, summary/stdout, attempt, timestamp, and event path where available.
+  - Pin the additive `lastWake` contract for tests and consumers: `kind` (required string), `classification` (required string), `exitCode` (required integer), `loopStatus` (optional string), `status` (optional string), `event` (optional string), `summary` (optional string), `attempt` (optional integer), `detectedAt` (optional timestamp string), and `eventPath` (optional string).
   - Keep existing waiter exit-code behavior: configured actionable code for actionable, `0` for success, `124` for loop timeout, `125` for persistent stall, and infrastructure/error code when unclassifiable.
 
 - [ ] **Add explicit watch-until-terminal intent**
   - Add `-WatchUntilTerminal` to `Start-LoopDetached.ps1`.
   - When `-WatchUntilTerminal` is set and `-TimeoutSeconds` was not explicitly supplied, launch the worker with `TimeoutSeconds = 0`.
   - Record watch intent in `manifest.json` and `params.json` so status/waiter output can explain long-watch behavior.
-  - Preserve explicitly supplied finite timeouts for bounded waits while making the configured timeout visible in metadata.
+  - Preserve explicitly supplied finite timeouts for bounded waits while making the configured timeout visible in metadata; explicit `-TimeoutSeconds` wins over the watch-until-terminal default and should have a regression test.
 
 - [ ] **Add safe loop cleanup tooling**
   - Add `Invoke-LoopCleanup.ps1` for `$HOME\.copilot\loop-runs\`.
@@ -40,6 +41,7 @@ The plan directly addresses the known reliability gaps:
 
 - [ ] **Validate and package**
   - Add or update PowerShell regression tests for waiter fallback, watch-until-terminal launch behavior, structured wake metadata, and cleanup safety.
+  - Include a smoke test that confirms new waiter JSON fields are additive and do not remove existing status fields.
   - Run existing loop test scripts plus new tests.
   - Update plugin metadata version consistently if packaging changes require it.
   - Commit implementation changes with selective staging.
