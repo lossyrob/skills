@@ -86,6 +86,8 @@ $result
 
 `ready_to_merge` is a steady state. The first ready state for a head SHA exits once so the agent can report it, then the same-head ready state becomes non-terminal after PR Sentry is restarted. Keep the sentry alive so later CI failures, base-branch changes, reviews, or merge conflicts are caught before the developer merges.
 
+**Before acting on a waiter completion, always inspect `$result.event` first.** Every event in the table below — including `merge_conflict`, `ci_failed`, `post_approval_review_received` — is reported by the underlying loop as a successful terminal ACTION, so the host CLI's "command completed" notification looks identical for "PR merged" and "merge conflict needs you." Do not say "PR Sentry ended cleanly" or transition modes based on the notification alone; route through the event table. GitHub's mergeability state is eventually-consistent (60–180s lag after `origin/<base>` moves), so a `merge_conflict` event may land 1–3 polling cycles after the upstream change; that latency is expected, not a miss.
+
 | Event | Implementer response |
 |---|---|
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |

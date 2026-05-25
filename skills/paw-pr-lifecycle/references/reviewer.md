@@ -76,6 +76,8 @@ $result = Receive-LifecycleLoopResult -LoopWait $loopWait -LoopStatus $loopStatu
 $result
 ```
 
+**Before acting on a waiter completion, always inspect `$result.event` first.** `review_addressed`, `rereview_requested`, and `head_changed_after_latest_review` are reported by the underlying loop as successful terminal ACTIONS, so the host CLI's "command completed" notification looks identical for "PR merged" and "implementer just pushed a fix that needs your eyes." Do not say "Follow-up Sentry ended cleanly" or transition modes based on the notification alone; route through the event table.
+
 | Event | Reviewer response |
 |---|---|
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |

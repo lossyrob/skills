@@ -66,6 +66,16 @@ Every observed-watch snippet in this skill uses `Receive-LifecycleLoopResult` (d
 
 Non-zero waiter exit codes are normal for actionable, timeout, stalled, and crashed lifecycles; `Receive-LifecycleLoopResult` always returns the parsed JSON in those cases and never throws on a non-zero exit code by itself. If the wrapper does throw, treat it as a true transport failure and follow the previous-worker-reconciliation rule above before any restart.
 
+### Distinguishing transport completion from lifecycle event
+
+When a backgrounded waiter completes, the host CLI surfaces a generic "command completed" notification. **That notification is purely a transport signal — it tells the agent the waiter has exited, not what happened.** The `$result.event` and `$result.status` fields of the parsed wrapper output are what determine the lifecycle event; the host-level completion notification carries no event-level information.
+
+Watch-until-terminal sentries (`paw-impl-merge-sentry-*`, `paw-review-follow-up-*`) treat actionable events as **successful terminal ACTIONS** in the underlying loop. That means PR Sentry events like `merge_conflict`, `ci_failed`, `changes_requested`, `merge_blocked`, and `post_approval_review_received`, and Follow-up Sentry events like `review_addressed`, `rereview_requested`, and `head_changed_after_latest_review` will all wake the agent through a notification that looks identical to "PR merged successfully" or "task complete." A clean exit code from the waiter is **not** evidence that the PR merged or that the sentry has nothing to report.
+
+After any waiter completion — observed wakeup, backgrounded-task notification, or sync return — the very first thing the agent must do is inspect `$result.event` and `$result.status` from the wrapper return value. Only then decide whether to enter the next mode, handle an actionable event per the role guide, or report completion. Do not say "the sentry ended cleanly" or "PR Sentry is done" based on the notification alone.
+
+GitHub's PR mergeability state is eventually-consistent: when `origin/<base>` moves, GitHub may take 60–180 seconds (sometimes longer under load) to recompute mergeability against the PR head. A `merge_conflict` event will therefore land 1–3 polling cycles after the upstream change rather than instantly. This is normal — do not restart the sentry, declare a miss, or transition modes during that window; the next poll will surface the conflict.
+
 ## Role guides
 
 | Role | Guide |
