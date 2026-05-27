@@ -86,6 +86,21 @@ Convert ODT (OpenDocument Text) files to Markdown with full comment and embedded
 
 **Requirements:** `pandoc`, Python 3. Optional: `olefile` (Visio), `libreoffice` (EMF→PNG).
 
+### paw-pr-lifecycle
+
+Operate PAW implementer and reviewer GitHub PR lifecycle loops on top of the `loop` skill: PR discovery for reviewers, review-response and merge-readiness sentries for implementers, marker-driven handoff between roles, and re-review requests after substantive post-approval changes. Opinionated for PAW workflow sessions and their `🐾 PAW …` comment/review markers.
+
+**Trigger phrases:** "PAW PR lifecycle", "PAW implementer loop", "PAW reviewer loop", "watch this PR until merge", "wait for PAW approval", "PAW PR sentry"
+
+**Features:**
+- Mode-based: Implementation → Review Response → PR Sentry for the implementer; PR Discovery → Review → Follow-up Sentry for the reviewer
+- Marker contract for the three `🐾 PAW …` events; a `+1` review may include non-blocking notes and the implementer is required to read the body before transitioning to PR Sentry
+- Five canonical check scripts (`impl-review-response-check.ps1`, `impl-merge-sentry-check.ps1`, `review-pr-discovery-check.ps1`, `review-addressed-check.ps1`, plus the shared `github-loop-common.ps1`) with GitHub rate-limit/transient-error routing through the loop skill's retry/stop exit codes
+- `Get-LoopScriptPaths.ps1` resolves the sibling `loop` skill automatically (checked-out repo → default plugin install → bare-skills install → recursive `~/.copilot` fallback)
+- Multi-account `gh` support: the loop scripts assert the requested `<gh-user>` is authenticated and pin API calls to that account's token
+
+**Requirements:** PowerShell 7+ on any OS, GitHub CLI authenticated against `github.com`, and the sibling [`loop`](#loop) skill (≥ 0.1.12).
+
 ## License
 
 MIT
