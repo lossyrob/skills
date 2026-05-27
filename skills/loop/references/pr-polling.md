@@ -53,8 +53,8 @@ PowerShell:
 $manifest = .\scripts\Start-LoopDetached.ps1 `
   -Name "pr-123-ready" `
   -CheckCommand ".\scripts\check-pr-ready.ps1 -Pr 123 -RequireReview" `
+  -WatchUntilTerminal `
   -IntervalSeconds 300 `
-  -TimeoutSeconds 21600 `
   -RetryExitCode 10 `
   -StopExitCode 11,20,21,22,23,24 `
   -ActionCommand "gh pr merge 123 --squash --delete-branch --match-head-commit (gh pr view 123 --json headRefOid --jq .headRefOid)" | ConvertFrom-Json
@@ -63,6 +63,8 @@ $manifest = .\scripts\Start-LoopDetached.ps1 `
 ```
 
 Detached PowerShell workers do not notify the agent session by themselves. `Wait-LoopDetached.ps1` is the attached quiet observer that wakes the agent when the PR watch becomes actionable, final, crashed, or persistently stalled. If the user needs to keep chatting while a PR watch is waiting, use the host CLI task background option on the waiter task rather than dropping the waiter. For background handoff instead, skip the waiter and give the user `$manifest.runDir` plus the exact `Get-LoopStatus.ps1` command.
+
+Use `-WatchUntilTerminal` for PR sentry-style watches so the detached worker timeout defaults to unbounded. If you intentionally pass a finite `-TimeoutSeconds`, that explicit timeout wins and may end the PR watch before a later event arrives.
 
 ## Decision table
 

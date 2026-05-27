@@ -36,6 +36,7 @@ param(
     [string]$RunDir = '',
     [string]$LockName = '',
 
+    [switch]$WatchUntilTerminal,
     [switch]$Invert,
     [switch]$Quiet,
     [switch]$Force,
@@ -198,6 +199,12 @@ New-Item -ItemType Directory -Force -Path $eventDir | Out-Null
 [System.IO.File]::WriteAllText($stdoutPath, '', [System.Text.UTF8Encoding]::new($false))
 [System.IO.File]::WriteAllText($stderrPath, '', [System.Text.UTF8Encoding]::new($false))
 
+$timeoutSecondsExplicit = $PSBoundParameters.ContainsKey('TimeoutSeconds')
+if ($WatchUntilTerminal -and -not $timeoutSecondsExplicit) {
+    $TimeoutSeconds = 0
+}
+$watchMode = if ($WatchUntilTerminal) { 'watch-until-terminal' } else { 'bounded' }
+
 if (-not $LockName) {
     $LockName = $safeName
 }
@@ -209,6 +216,7 @@ $params = [ordered]@{
     OnRetryCommand = $OnRetryCommand
     IntervalSeconds = $IntervalSeconds
     TimeoutSeconds = $TimeoutSeconds
+    TimeoutSecondsExplicit = $timeoutSecondsExplicit
     MaxTries = $MaxTries
     BackoffFactor = $BackoffFactor
     MaxIntervalSeconds = $MaxIntervalSeconds
@@ -220,6 +228,8 @@ $params = [ordered]@{
     LastResultPath = $lastResultPath
     HeartbeatPath = $heartbeatPath
     EventDir = $eventDir
+    WatchUntilTerminal = [bool]$WatchUntilTerminal
+    WatchMode = $watchMode
     Invert = [bool]$Invert
     Quiet = [bool]$Quiet
     DryRun = $false
@@ -258,6 +268,10 @@ $plan = [ordered]@{
     lastResultPath = $lastResultPath
     heartbeatPath = $heartbeatPath
     eventDir = $eventDir
+    watchMode = $watchMode
+    watchUntilTerminal = [bool]$WatchUntilTerminal
+    timeoutSeconds = $TimeoutSeconds
+    timeoutSecondsExplicit = $timeoutSecondsExplicit
     command = $powershell
     arguments = $arguments
     argumentString = $argumentString
