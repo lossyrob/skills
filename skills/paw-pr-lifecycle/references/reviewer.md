@@ -34,7 +34,7 @@ If the issue has base-branch guidance, include `-BaseBranch <base-branch>` in th
 
 Review the current PR head with the requested PAW review strategy. Use a worktree so the main checkout remains untouched.
 
-Submit an actual GitHub PR review, not a PR comment or issue/timeline comment substitute. Use a body-only review unless inline anchors are validated against the current PR diff:
+Submit an actual GitHub PR review, not a PR comment or issue/timeline comment substitute. Prefer inline review comments for actionable findings tied to specific changed lines. Validate anchors against the current PR diff as part of preparing the review. Use the review body for the overall verdict, cross-cutting feedback, and findings that cannot be reliably anchored. Do not choose a body-only review merely because anchor validation has not been attempted. For a body-only review, use:
 
 ```powershell
 gh pr review <pr-number> --repo <repo> --comment --body-file <review-body-file>
@@ -85,4 +85,3 @@ $result
 | `already_merged` | Task complete. |
 | `closed_unmerged` | Stop and report the terminal state. |
 | `script_or_github_api_error` | Fix the canonical script in `scripts\`, then restart the loop. |
-

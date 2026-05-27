@@ -18,6 +18,7 @@ $baseBranchFilter = if ([string]::IsNullOrWhiteSpace($BaseBranch)) { $null } els
 function New-PrCandidate {
   param(
     [object]$Pr,
+    [string]$CandidateRepo,
     [string]$Source
   )
 
@@ -43,6 +44,7 @@ function New-PrCandidate {
   }
 
   return [pscustomobject]@{
+    repo = $CandidateRepo
     number = [int](Get-LoopProperty $Pr "number")
     title = $title
     state = [string](Get-LoopProperty $Pr "state")
@@ -56,6 +58,22 @@ function New-PrCandidate {
     hasBodyReference = $hasBodyReference
     isStrongFallback = ($hasClosingReference -or $hasTitleReference)
   }
+}
+
+function Get-PrReferenceRepo {
+  param(
+    [object]$Reference
+  )
+
+  $repository = Get-LoopProperty $Reference "repository"
+  $name = [string](Get-LoopProperty $repository "name")
+  $owner = Get-LoopProperty $repository "owner"
+  $ownerLogin = [string](Get-LoopProperty $owner "login")
+  if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($ownerLogin)) {
+    return $Repo
+  }
+
+  return "$ownerLogin/$name"
 }
 
 try {
@@ -88,13 +106,14 @@ try {
         continue
       }
 
+      $refRepo = Get-PrReferenceRepo -Reference $ref
       $refPr = Get-LoopPullRequest `
-        -Repo $Repo `
+        -Repo $refRepo `
         -PullRequest ([int]$refNumber) `
         -Fields "number,title,body,state,baseRefName,url,updatedAt"
 
       if ($null -eq $baseBranchFilter -or [string](Get-LoopProperty $refPr "baseRefName") -eq $baseBranchFilter) {
-        $candidates += New-PrCandidate -Pr $refPr -Source "closedByPullRequestsReferences"
+        $candidates += New-PrCandidate -Pr $refPr -CandidateRepo $refRepo -Source "closedByPullRequestsReferences"
       }
     }
   }
@@ -103,7 +122,8 @@ try {
     $selected = $candidates | Select-Object -First 1
 
     Complete-LoopCheck -Status "ACTION" -Event "pr_found" -Data ([ordered]@{
-      repo = $Repo
+      repo = $selected.repo
+      issueRepo = $Repo
       issue = $Issue
       issueUrl = Get-LoopProperty $issueView "url"
       issueLookupError = $issueLookupError
@@ -113,7 +133,7 @@ try {
       prUrl = $selected.url
       selectionSource = $selected.source
       candidateCount = $candidates.Count
-      candidates = @($candidates | Select-Object number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
+      candidates = @($candidates | Select-Object repo, number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
     }) -ExitCode 0
   }
 
@@ -125,7 +145,7 @@ try {
       issueLookupError = $issueLookupError
       baseBranch = $baseBranchFilter
       candidateCount = $candidates.Count
-      candidates = @($candidates | Select-Object number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
+      candidates = @($candidates | Select-Object repo, number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
     }) -ExitCode $script:LoopStopExitCode
   }
 
@@ -158,7 +178,7 @@ try {
         continue
       }
 
-      $fallbackCandidates += New-PrCandidate -Pr $pr -Source "pr_search"
+      $fallbackCandidates += New-PrCandidate -Pr $pr -CandidateRepo $Repo -Source "pr_search"
     }
   }
 
@@ -172,7 +192,8 @@ try {
       Select-Object -First 1
 
     Complete-LoopCheck -Status "ACTION" -Event "pr_found" -Data ([ordered]@{
-      repo = $Repo
+      repo = $selected.repo
+      issueRepo = $Repo
       issue = $Issue
       issueUrl = Get-LoopProperty $issueView "url"
       issueLookupError = $issueLookupError
@@ -182,7 +203,7 @@ try {
       prUrl = $selected.url
       selectionSource = $selected.source
       candidateCount = $strongFallbackCandidates.Count
-      candidates = @($strongFallbackCandidates | Select-Object number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
+      candidates = @($strongFallbackCandidates | Select-Object repo, number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
     }) -ExitCode 0
   }
 
@@ -194,7 +215,7 @@ try {
       issueLookupError = $issueLookupError
       baseBranch = $baseBranchFilter
       candidateCount = $strongFallbackCandidates.Count
-      candidates = @($strongFallbackCandidates | Sort-Object @{ Expression = "score"; Descending = $true }, @{ Expression = "updatedAt"; Descending = $true } | Select-Object number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
+      candidates = @($strongFallbackCandidates | Sort-Object @{ Expression = "score"; Descending = $true }, @{ Expression = "updatedAt"; Descending = $true } | Select-Object repo, number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
     }) -ExitCode $script:LoopStopExitCode
   }
 
@@ -207,7 +228,7 @@ try {
       issueLookupError = $issueLookupError
       baseBranch = $baseBranchFilter
       candidateCount = $fallbackCandidates.Count
-      candidates = @($fallbackCandidates | Sort-Object @{ Expression = "score"; Descending = $true }, @{ Expression = "updatedAt"; Descending = $true } | Select-Object number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
+      candidates = @($fallbackCandidates | Sort-Object @{ Expression = "score"; Descending = $true }, @{ Expression = "updatedAt"; Descending = $true } | Select-Object repo, number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
     }) -ExitCode $script:LoopRetryExitCode
   }
 
