@@ -1,22 +1,15 @@
 ---
 name: spar
-description: A pairing-style critique skill run as sparring rounds. When you face a consequential decision under uncertainty, open a gated, multi-round critique episode with a different-model subagent (a "duck") that attacks your assumptions and surfaces failure modes and alternatives. You keep the pen; the pair advises and has no veto. Supports integrate-and-proceed or brief-back-to-operator. Use it when the operator asks to "pair", "spar", "rubber duck", "get a second opinion", "discuss amongst yourselves", or to consult another model before committing to an approach.
+description: Open a gated, multi-round critique episode with a different-model subagent that attacks your assumptions before you commit to a consequential, uncertain decision. Use on "pair", "spar", "rubber duck", "get a second opinion", "discuss amongst yourselves", or "consult another model before committing".
 ---
 # Spar
 
 Get a sharp second opinion from a different model before you commit to a
-consequential decision.
-
-This is a **pairing** skill, with one deliberate divergence. Human pair
-programming avoids adversarial communication, but only because humans take tough
-feedback badly. Between agents there is no ego to protect, so the optimal pairing
-looks like **sparring**: the partner is adversarial *in service of the work, not
-despite it*. You keep the structure of pairing — a shared goal, two perspectives
-on every consequential decision, and the driver holding the pen — and drop the
-ego-protecting hedging that turns review into a rubber stamp.
-
-The pairing structure keeps sparring from becoming combative; the sparring norm
-keeps pairing from becoming sycophantic. The two are mutual guardrails.
+consequential decision. This is a **pairing** skill with one divergence: between
+agents there is no ego to protect, so the best pairing is **sparring** — the
+partner is adversarial *in service of the work*. Keep the structure of pairing —
+a shared goal and the driver holding the pen — and drop the ego-protecting
+hedging that turns review into a rubber stamp.
 
 ## What this is
 
@@ -114,6 +107,5 @@ a decision the operator owns, or an explicit request for a brief → brief-back.
 ## Caller customization
 
 Callers (prompts or operators) may layer context-specific instructions on top of
-this skill: add domain-specific triggers, pin a particular pairing model, require
-a specific mode, or point the episode at a specific artifact. The mechanics above
-do not change — only what is on the table does.
+this skill: add domain triggers, pin a pairing model, force a mode, or point the
+episode at a specific artifact. The mechanics above do not change.
