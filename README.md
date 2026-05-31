@@ -101,6 +101,22 @@ Operate PAW implementer and reviewer GitHub PR lifecycle loops on top of the `lo
 
 **Requirements:** PowerShell 7+ on any OS, GitHub CLI authenticated against `github.com`, and the sibling [`loop`](#loop) skill (≥ 0.1.12).
 
+### spar
+
+Get a sharp second opinion from a different model before committing to a consequential decision. A pairing-style critique skill run as **sparring rounds**: it keeps the structure of pair programming (shared goal, two perspectives per decision, the driver holds the pen) but drops the ego-protecting hedging that turns review into a rubber stamp, since there is no human ego to protect between agents.
+
+**Trigger phrases:** "pair", "spar", "rubber duck", "get a second opinion", "discuss amongst yourselves", "consult another model before committing"
+
+**Features:**
+- Gated, not ambient: open an episode only for decisions that are both consequential and uncertain (load-bearing design/contract, plan invalidation, non-trivial fork, boundary change, repeated failure) — never for routine coding or "review this diff"
+- Cross-model by design: the pair runs as a different-model `rubber-duck` subagent (default Opus 4.8 when the driver is GPT-5.5, and vice versa); operators can pin a model
+- Dialogic depth: gate the entrance, not the depth — run several short rounds while they keep resolving the same decision, with a context packet to offset the subagent's missing history
+- Anti-sycophancy: the pair attacks assumptions and surfaces failure modes rather than validating; explicit closure (revise the plan or record why the critique does not apply)
+- Two modes: **integrate** (fold the outcome in and proceed) or **brief-back** (bring the operator a brief of gaps and recommendations)
+- Caller-customizable: prompts or operators can add domain triggers, pin a model, or force a mode
+
+**Requirements:** Copilot CLI with the `task` (subagent) tool and a second model available for the pairing subagent. Uses the `rubber-duck` agent type when available and falls back to a `general-purpose` subagent with the sparring role in its prompt; if the named default pairing model is unavailable, any model different from the driver works.
+
 ## License
 
 MIT
