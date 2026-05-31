@@ -115,7 +115,7 @@ Get a sharp second opinion from a different model before committing to a consequ
 - Two modes: **integrate** (fold the outcome in and proceed) or **brief-back** (bring the operator a brief of gaps and recommendations)
 - Caller-customizable: prompts or operators can add domain triggers, pin a model, or force a mode
 
-**Requirements:** Copilot CLI with the `task` (subagent) tool and a second model available for the pairing subagent.
+**Requirements:** Copilot CLI with the `task` (subagent) tool and a second model available for the pairing subagent. Uses the `rubber-duck` agent type when available and falls back to a `general-purpose` subagent with the sparring role in its prompt; if the named default pairing model is unavailable, any model different from the driver works.
 
 ## License
 

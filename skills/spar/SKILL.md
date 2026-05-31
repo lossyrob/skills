@@ -26,7 +26,10 @@ keeps pairing from becoming sycophantic. The two are mutual guardrails.
   requires a different model, not an echo of your own reasoning. The pair runs as
   a rubber-duck subagent (a "duck"). When the driver is GPT-5.5, the default duck
   is Opus 4.8; when the driver is an Opus model, default to a strong GPT model.
-  The operator or caller may pin a different model.
+  The operator or caller may pin a different model. If the named default model is
+  unavailable, pick the strongest available model that is *different* from the
+  driver — a different model is the requirement, the specific name is only a
+  default.
 - **It is gated, not ambient.** You do not consult on every change. You open a
   deliberate episode when a decision is both consequential and uncertain.
 - **Once opened, it is dialogic.** Gate the entrance, not the depth. A single
@@ -89,7 +92,10 @@ change your thinking.
 Run the duck with the `task` tool as a `rubber-duck` agent, overriding `model` to
 the pairing model. For a real back-and-forth, run it in `background` mode and use
 `write_agent` to send follow-up rounds, so the duck retains the episode's context
-across turns.
+across turns. If your Copilot CLI build does not offer a `rubber-duck` agent type,
+use a `general-purpose` subagent instead and put the sparring role (attack
+assumptions, find failure modes, do not validate) directly in its prompt — the
+mechanics are identical, only the agent type changes.
 
 ## Modes
 
