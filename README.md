@@ -95,7 +95,7 @@ Operate PAW implementer and reviewer GitHub PR lifecycle loops on top of the `lo
 **Features:**
 - Mode-based: Implementation → Review Response → PR Sentry for the implementer; PR Discovery → Review → Follow-up Sentry for the reviewer
 - Marker contract for the three `🐾 PAW …` events; a `+1` review may include non-blocking notes and the implementer is required to read the body before transitioning to PR Sentry
-- Five canonical check scripts (`impl-review-response-check.ps1`, `impl-merge-sentry-check.ps1`, `review-pr-discovery-check.ps1`, `review-addressed-check.ps1`, plus the shared `github-loop-common.ps1`) with GitHub rate-limit/transient-error routing through the loop skill's retry/stop exit codes
+- Canonical check scripts for implementer/reviewer lifecycle loops (`impl-review-response-check.ps1`, `impl-merge-sentry-check.ps1`, `review-pr-discovery-check.ps1`, `review-addressed-check.ps1`, `review-azdo-addressed-check.ps1`, plus the shared `github-loop-common.ps1`) with GitHub rate-limit/transient-error routing through the loop skill's retry/stop exit codes
 - `Get-LoopScriptPaths.ps1` resolves the sibling `loop` skill automatically (checked-out repo → default plugin install → bare-skills install → recursive `~/.copilot` fallback)
 - Multi-account `gh` support: the loop scripts assert the requested `<gh-user>` is authenticated and pin API calls to that account's token
 
