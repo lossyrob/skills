@@ -168,6 +168,9 @@ function Get-RunClassification {
     if ($loopStatus -eq 'actionable') {
         return [pscustomobject]@{ Classification = 'actionable'; CompletedAt = $completedAt; Reason = $loopStatus }
     }
+    if ($loopStatus -eq 'abandoned') {
+        return [pscustomobject]@{ Classification = 'abandoned'; CompletedAt = $completedAt; Reason = $loopStatus }
+    }
     return [pscustomobject]@{ Classification = 'retain'; CompletedAt = $completedAt; Reason = if ($loopStatus) { $loopStatus } else { 'terminal non-success' } }
 }
 
@@ -213,13 +216,13 @@ if (Test-Path -LiteralPath $resolvedRunRoot -PathType Container) {
     }
 }
 
-$successRuns = @($runs | Where-Object { $_.Classification -eq 'final-success' } | Sort-Object @{ Expression = { if ($_.CompletedAt) { $_.CompletedAt } else { $_.LastWriteTimeUtc } }; Descending = $true })
-for ($i = 0; $i -lt $successRuns.Count; $i++) {
-    $run = $successRuns[$i]
+$completedRuns = @($runs | Where-Object { $_.Classification -in @('final-success', 'abandoned') } | Sort-Object @{ Expression = { if ($_.CompletedAt) { $_.CompletedAt } else { $_.LastWriteTimeUtc } }; Descending = $true })
+for ($i = 0; $i -lt $completedRuns.Count; $i++) {
+    $run = $completedRuns[$i]
     $completedAt = if ($run.CompletedAt) { $run.CompletedAt } else { $run.LastWriteTimeUtc }
     $ageDays = ($now - $completedAt).TotalDays
     if ($i -lt $MaxCompletedRuns) {
-        $run.Reason = "retained as one of the newest $MaxCompletedRuns final-success runs"
+        $run.Reason = "retained as one of the newest $MaxCompletedRuns completed runs"
         continue
     }
     if ($ageDays -lt $RetentionDays) {
@@ -228,10 +231,10 @@ for ($i = 0; $i -lt $successRuns.Count; $i++) {
     }
     $run.Eligible = $true
     $run.Action = if ($Apply) { 'delete' } else { 'would-delete' }
-    $run.Reason = 'eligible old final-success run'
+    $run.Reason = "eligible old $($run.Classification) run"
 }
 
-foreach ($run in $runs | Where-Object { $_.Classification -ne 'final-success' }) {
+foreach ($run in $runs | Where-Object { $_.Classification -notin @('final-success', 'abandoned') }) {
     switch ($run.Classification) {
         'live' { $run.Reason = 'live run' }
         'actionable' { $run.Reason = 'retained actionable run' }

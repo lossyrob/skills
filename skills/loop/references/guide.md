@@ -45,16 +45,13 @@ Use `-WatchUntilTerminal` for long detached workflows where elapsed time should 
 
 For PowerShell, use `Start-LoopDetached.ps1` by default. Attached `loop.ps1` sessions depend on the agent continuing to consume a live terminal stream; if a loop lives longer than expected, the process can still be running while the agent's view of output is stale or incomplete. Detached runs avoid that by redirecting stdout/stderr to files and exposing structured status through `last-result.json`, `heartbeat.json`, `events\`, and `Get-LoopStatus.ps1`.
 
-Detached workers are independent background processes, not Copilot/tool-managed async jobs. A detached worker by itself does **not** generate Copilot or tool completion notifications when it becomes `final` or `actionable`. After starting a detached worker, choose one orchestration mode:
+Detached workers are session-bound background processes, not independent daemons. The launcher records the owner process in the run manifest; if that owner exits, the worker writes an `abandoned` terminal result and exits the next time it checks ownership. Start the worker and the quiet waiter from the same owner/orchestrator process so the worker has a live owner for the whole observed watch.
 
-| Mode | Use when | Required follow-through |
-|---|---|---|
-| Observed watch | The user asked the agent to wait, watch, continue when ready, or handle the next event. | Run attached quiet `Wait-LoopDetached.ps1` against the run directory, then background that waiter in the host CLI task UI by default when the user may need to keep interacting. It exits on `final`, `actionable`, `crashed`, or persistent `stalled` status so the agent gets a normal tool completion wakeup. |
-| Background handoff | The user explicitly wants an independent background watch. | Tell the user no automatic notification will occur, provide the run directory, and provide the exact status command. |
+The worker checks owner liveness before and after each check/action/ack/on-retry command and during sleeps. It does not terminate a child command that is already running, so each command should enforce its own timeout when a hang is possible.
 
-Do not say "I'll continue when it exits" for a detached worker unless `Wait-LoopDetached.ps1` or another observer is actually running.
+Do not say "I'll continue when it exits" for a detached worker unless `Wait-LoopDetached.ps1` is actually running in the host CLI task UI.
 
-CLI task backgrounding of `Wait-LoopDetached.ps1` is still an observed watch because the waiter remains managed and can complete when the detached worker needs attention. It is different from background handoff, where no waiter is running and the user must inspect status manually. Backgrounding here means the host CLI task UI for the in-flight waiter command; do not wrap `Wait-LoopDetached.ps1` in `Start-Job`, `Start-Process`, `&`, or another shell-side detacher.
+CLI task backgrounding of `Wait-LoopDetached.ps1` is still an observed watch because the waiter remains managed and can complete when the detached worker needs attention. Backgrounding here means the host CLI task UI for the in-flight waiter command; do not wrap `Wait-LoopDetached.ps1` in `Start-Job`, `Start-Process`, `&`, or another shell-side detacher.
 
 Use attached `loop.ps1` only when you have positive evidence that the loop is short-lived, the user explicitly asked for live terminal output, or you are debugging the check command. If duration is uncertain, detached wins.
 
@@ -77,11 +74,11 @@ The default policy is:
 | `3` | Detached worker reported a fatal not-found/not-executable check. |
 | `122` | Opt-in waiter timeout expired before the worker reached a wakeup state; only emitted when `Wait-LoopDetached.ps1 -TimeoutSeconds` / `-MaxAttachedSeconds` is greater than `0`. |
 | `124` | Detached worker timed out or hit max tries. |
-| `125` | Waiter saw persistent stalled status. |
+| `125` | Waiter saw an abandoned owner or persistent stalled status. |
 
 When a detached worker has `-ActionCommand`, the waiter does not wake on the initial actionable event while that worker is still alive. It waits for action/ack completion: action success exits `0`, action failure exits the action code, and ack failure exits the ack code.
 
-The waiter has no timeout by default (`-TimeoutSeconds 0`; the legacy `-MaxAttachedSeconds` alias is still supported). If you explicitly pass a waiter timeout and the emitted JSON has `waiter.timedOut: true`, the detached worker may still be running; decide whether to reattach with `Wait-LoopDetached.ps1 -RunDir <run-dir>` or hand off status inspection. If the user needs to continue chatting while the waiter is active, background the waiter task in the host CLI task UI; do not convert the workflow to detached-only handoff unless automatic wakeup is no longer desired.
+The waiter has no timeout by default (`-TimeoutSeconds 0`; the legacy `-MaxAttachedSeconds` alias is still supported). If you explicitly pass a waiter timeout and the emitted JSON has `waiter.timedOut: true`, the detached worker may still be running; decide whether to continue waiting with a live owner or stop the workflow. If the user needs to continue chatting while the waiter is active, background the waiter task in the host CLI task UI; do not convert the workflow to detached-only status polling.
 
 Use retry and stop lists for multi-state checks:
 
@@ -132,7 +129,7 @@ Before starting an agent-reasoned stateful loop, decide whether it is single-sho
 
 Use todos for agent-reasoned stateful loops when there may be substantial work between detection and acknowledgement. Track at least these steps: inspect the emitted event details, handle and validate the event, run the exact ack command, and either restart the loop or finish according to the chosen lifecycle. Simple stateless waits do not need this todo guardrail.
 
-For long detached watch-until-terminal workflows, also create a cleanup todo such as `loop-cleanup:<watch-or-work-id>`. Resolve it before final response or PR handoff by running `Invoke-LoopCleanup.ps1` in report mode, inspecting the report, and applying deletion only for eligible final-success runs. Record an intentional skip when ambiguous or diagnostically useful runs are retained.
+For long detached watch-until-terminal workflows, also create a cleanup todo such as `loop-cleanup:<watch-or-work-id>`. Resolve it before final response or PR handoff by running `Invoke-LoopCleanup.ps1` in report mode, inspecting the report, and applying deletion only for eligible final-success or abandoned runs. Record an intentional skip when ambiguous or diagnostically useful runs are retained.
 
 Example:
 
@@ -305,7 +302,7 @@ The run directory contains:
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | Process ID, process start time, command, and all important paths. |
+| `manifest.json` | Worker PID/start time, owner PID/start time, command, and all important paths. |
 | `params.json` | Full loop parameter set. Complex check/action strings are passed through this file, not through `Start-Process` command-line quoting. |
 | `loop.pid` | Loop process ID. |
 | `stdout.log` / `stderr.log` | Redirected terminal output. Pass `-Quiet` to `Start-LoopDetached.ps1` to keep these sparse. |
@@ -321,11 +318,11 @@ For an observed watch, attach the quiet waiter to the durable run:
 .\scripts\Wait-LoopDetached.ps1 -RunDir $manifest.runDir -PollIntervalSeconds 30
 ```
 
-`Wait-LoopDetached.ps1` emits no progress output. It repeatedly calls `Get-LoopStatus.ps1`, emits one final status JSON object with a `waiter` metadata field and additive `lastWake` metadata for final/actionable wakeups, then exits. Its default wakeup states are `final`, `actionable`, `crashed`, and three consecutive `stalled` polls. A one-off `stalled` classification may be a long check attempt; requiring consecutive stalled polls reduces false wakeups while still surfacing a persistently hung worker. `waiter.timeoutSeconds: 0` means the waiter is unbounded; if you opt into a waiter timeout, that timeout does not stop the detached worker.
+`Wait-LoopDetached.ps1` emits no progress output. It repeatedly calls `Get-LoopStatus.ps1`, emits one final status JSON object with a `waiter` metadata field and additive `lastWake` metadata for final/actionable/abandoned wakeups, then exits. Its default wakeup states are `final`, `actionable`, `crashed`, `abandoned`, and three consecutive `stalled` polls. A one-off `stalled` classification may be a long check attempt; requiring consecutive stalled polls reduces false wakeups while still surfacing a persistently hung worker. `waiter.timeoutSeconds: 0` means the waiter is unbounded; if you opt into a waiter timeout, that timeout does not stop the detached worker.
 
-`Get-LoopStatus.ps1` checks PID liveness, process start time, and heartbeat freshness. Start-time validation prevents a recycled PID from making an old run look alive. Heartbeat freshness uses `heartbeat.nextAttemptAfter` or `heartbeat.nextSleepSeconds` when present, then falls back to `2 * IntervalSeconds + GraceSeconds`.
+`Get-LoopStatus.ps1` checks worker and owner PID liveness, process start times, and heartbeat freshness. Start-time validation prevents a recycled PID from making an old run look alive. Heartbeat freshness uses `heartbeat.nextAttemptAfter` or `heartbeat.nextSleepSeconds` when present, then falls back to `2 * IntervalSeconds + GraceSeconds`.
 
-The waiter is disposable and re-attachable. If it is interrupted, run `Wait-LoopDetached.ps1` again with the same `RunDir`; the detached worker keeps running and durable state remains the source of truth.
+The waiter is disposable only while the original owner process is alive. If the waiter is interrupted but the owner remains alive, run `Wait-LoopDetached.ps1` again with the same `RunDir`; durable state remains the source of truth. If the owner is gone, status reports `abandoned` and new sessions must start a fresh loop instead of adopting the stale worker.
 
 When a waiting task blocks user interaction, use the CLI task background option on `Wait-LoopDetached.ps1`. The detached worker still owns durability, and the backgrounded waiter still owns the automatic wakeup.
 
@@ -338,9 +335,10 @@ An observed watch's maximum lifetime is normally bounded by the detached worker'
 | `stalled` | PID exists but heartbeat is past its expected freshness deadline; the check may be hung or unusually slow. |
 | `actionable` | Latest immutable event is an actionable stop-code event. |
 | `final` | Latest immutable event is terminal (success, timeout, fatal, etc.). |
+| `abandoned` | The recorded owner process exited; the worker either wrote an abandoned event or status refused an owner-dead run. |
 | `crashed` | PID is gone and no terminal event was written. |
 
-Detached run directories are durable scratch state. They may contain command strings, stdout/stderr, and check-reported JSON, so do not put secrets in inline commands or check output. Keep run directories out of source control and use `Invoke-LoopCleanup.ps1` to report and prune old final-success runs under `$HOME\.copilot\loop-runs\` when they are no longer useful.
+Detached run directories are durable scratch state. They may contain command strings, stdout/stderr, and check-reported JSON, so do not put secrets in inline commands or check output. Keep run directories out of source control and use `Invoke-LoopCleanup.ps1` to report and prune old final-success or abandoned runs under `$HOME\.copilot\loop-runs\` when they are no longer useful.
 
 ## Cleanup
 
@@ -353,21 +351,11 @@ Detached run directories are durable scratch state. They may contain command str
 
 Cleanup skips live runs using PID plus process start-time validation. It retains actionable, failed, crashed, stalled, ambiguous, malformed, locked, and diagnostically useful runs by default. For agent-managed long watches, cleanup is a TODO-tracked wrap-up obligation, not a hidden worker/waiter side effect.
 
-Background handoff text should include:
-
-```text
-Detached loop is running independently; no Copilot/tool completion notification will be sent.
-Run directory: <run-dir>
-Status command: .\scripts\Get-LoopStatus.ps1 -RunDir "<run-dir>"
-```
-
-For handoff, do **not** claim the agent will continue automatically. To resume agent wakeup later, attach `Wait-LoopDetached.ps1` to the same run directory.
-
 ## Safety notes
 
 - Prefer checked-in helper scripts or temporary scripts over complex inline commands.
 - For PowerShell, default to `Start-LoopDetached.ps1`; use attached `loop.ps1` only for known short-lived or debugging loops.
-- For detached PowerShell loops, either run `Wait-LoopDetached.ps1`, keep another observer active, or clearly hand off the run directory and status command before final response.
+- For detached PowerShell loops, run `Wait-LoopDetached.ps1` from the same owner/orchestrator process. Do not leave a detached worker as an independent background watch.
 - Do not run untrusted command strings.
 - Do not include secrets in check/action command strings or output; `params.json`, `stdout.log`, `stderr.log`, `last-result.json`, and `events\*.json` persist them until the run directory is deleted.
 - Quote inline commands for the shell that will execute them. Prefer helper scripts when quoting becomes hard to audit.
