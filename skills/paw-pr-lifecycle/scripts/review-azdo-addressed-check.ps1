@@ -90,16 +90,71 @@ function Get-AdoAuthorizationHeader {
   return "Basic $([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($pair)))"
 }
 
+function Get-AdoErrorStatusCode {
+  param(
+    [Parameter(Mandatory)]
+    [object]$ErrorRecord
+  )
+
+  $response = $ErrorRecord.Exception.Response
+  if ($null -ne $response) {
+    $statusCode = Get-LoopProperty $response "StatusCode"
+    if ($null -ne $statusCode) {
+      return [int]$statusCode
+    }
+  }
+
+  $message = [string]$ErrorRecord.Exception.Message
+  if ($message -match "Response status code does not indicate success:\s*(?<code>\d{3})") {
+    return [int]$matches["code"]
+  }
+
+  return $null
+}
+
+function Test-AdoTransientError {
+  param(
+    [Parameter(Mandatory)]
+    [object]$ErrorRecord
+  )
+
+  $statusCode = Get-AdoErrorStatusCode -ErrorRecord $ErrorRecord
+  if ($statusCode -in @(408, 429, 500, 502, 503, 504)) {
+    return $true
+  }
+
+  $message = [string]$ErrorRecord.Exception.Message
+  return $message -match "(?i)(timeout|timed out|connection reset|connection refused|temporarily unavailable|service unavailable|gateway timeout)"
+}
+
 function Invoke-AdoJson {
   param(
     [Parameter(Mandatory)]
     [string]$Uri,
 
     [Parameter(Mandatory)]
-    [hashtable]$Headers
+    [hashtable]$Headers,
+
+    [int]$MaxAttempts = 3,
+
+    [int]$RetryDelaySeconds = 2
   )
 
-  return Invoke-RestMethod -Headers $Headers -Uri $Uri -Method Get -TimeoutSec 30
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    try {
+      return Invoke-RestMethod -Headers $Headers -Uri $Uri -Method Get -TimeoutSec 30
+    }
+    catch {
+      if ($attempt -lt $MaxAttempts -and (Test-AdoTransientError -ErrorRecord $_)) {
+        Start-Sleep -Seconds ([Math]::Min(15, $RetryDelaySeconds * $attempt))
+        continue
+      }
+
+      throw
+    }
+  }
+
+  throw "Azure DevOps request failed after $MaxAttempts attempts: $Uri"
 }
 
 function Get-AdoCommentEvents {
@@ -341,6 +396,18 @@ try {
   }) -ExitCode $script:LoopRetryExitCode
 }
 catch {
+  if (Test-AdoTransientError -ErrorRecord $_) {
+    Complete-LoopCheck -Status "WAIT" -Event "azdo_api_transient_error" -Data ([ordered]@{
+      provider = "azure-devops"
+      organizationUrl = $OrganizationUrl
+      project = $Project
+      repository = $Repository
+      pullRequest = $PullRequest
+      error = $_.Exception.Message
+      statusCode = Get-AdoErrorStatusCode -ErrorRecord $_
+    }) -ExitCode $script:LoopRetryExitCode
+  }
+
   Complete-LoopCheck -Status "STOP" -Event "script_or_azdo_api_error" -Data ([ordered]@{
     provider = "azure-devops"
     organizationUrl = $OrganizationUrl
