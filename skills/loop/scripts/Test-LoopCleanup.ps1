@@ -75,6 +75,7 @@ function New-RunDir {
 try {
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $success = New-RunDir -Name 'old-success' -Result @{ kind = 'success'; loopStatus = 'success'; status = 'SUCCESS'; event = 'condition_satisfied'; checkExitCode = 0 }
+    $abandoned = New-RunDir -Name 'old-abandoned' -Result @{ kind = 'abandoned'; loopStatus = 'abandoned'; status = 'ABANDONED'; event = 'owner_process_exited'; checkExitCode = 0 }
     $actionable = New-RunDir -Name 'actionable' -Result @{ kind = 'actionable'; loopStatus = 'actionable'; status = 'ACTION'; event = 'domain_event'; checkExitCode = 31 }
     $live = New-RunDir -Name 'live-success' -Result @{ kind = 'success'; loopStatus = 'success'; status = 'SUCCESS'; event = 'condition_satisfied'; checkExitCode = 0 } -Live
 
@@ -84,12 +85,13 @@ try {
         if ($report.eligibleRuns -lt 1) { throw "expected at least one eligible run, got $($report.eligibleRuns)" }
     }
 
-    Assert-Case 'apply deletes only eligible final-success runs' {
+    Assert-Case 'apply deletes only eligible completed runs' {
         $report = & pwsh -NoProfile -ExecutionPolicy Bypass -File $cleanupScript -RunRoot $runRoot -RetentionDays 0 -MaxCompletedRuns 0 -Apply | ConvertFrom-Json
         if (Test-Path -LiteralPath $success -PathType Container) { throw 'eligible success run should be deleted with -Apply' }
+        if (Test-Path -LiteralPath $abandoned -PathType Container) { throw 'eligible abandoned run should be deleted with -Apply' }
         if (-not (Test-Path -LiteralPath $actionable -PathType Container)) { throw 'actionable run should be retained' }
         if (-not (Test-Path -LiteralPath $live -PathType Container)) { throw 'live run should be retained' }
-        if ($report.deletedRuns -ne 1) { throw "expected deletedRuns 1, got $($report.deletedRuns)" }
+        if ($report.deletedRuns -ne 2) { throw "expected deletedRuns 2, got $($report.deletedRuns)" }
     }
 } finally {
     Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction SilentlyContinue

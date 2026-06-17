@@ -37,6 +37,9 @@ param(
     [string]$HeartbeatPath = '',
     [string]$EventDir = '',
     [string]$ParamsFile = '',
+    [bool]$OwnerRequired = $false,
+    [int]$OwnerProcessId = 0,
+    [string]$OwnerProcessStartTime = '',
 
     [switch]$Invert,
     [switch]$Quiet,
@@ -54,6 +57,7 @@ $ExitGeneral = 1
 $ExitBadArgs = 2
 $ExitNoCommand = 3
 $ExitTimeout = 124
+$ExitAbandoned = 125
 
 $script:Mutex = $null
 $script:MutexAcquired = $false
@@ -91,6 +95,19 @@ function Get-CurrentPowerShellPath {
 
 function Get-UtcTimestamp {
     return (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+}
+
+function ConvertTo-UtcDateTime {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+        return $null
+    }
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+    $parsed = [datetime]::MinValue
+    if ([datetime]::TryParse(([string]$Value).Trim(), [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+    return $null
 }
 
 function ConvertTo-PlainText {
@@ -227,6 +244,12 @@ function Import-ParamsFile {
     if ($null -ne $value) { $script:HeartbeatPath = [string]$value }
     $value = Get-JsonProperty -Object $params -Name 'EventDir'
     if ($null -ne $value) { $script:EventDir = [string]$value }
+    $value = Get-JsonProperty -Object $params -Name 'OwnerRequired'
+    if ($null -ne $value) { $script:OwnerRequired = [bool]$value }
+    $value = Get-JsonProperty -Object $params -Name 'OwnerProcessId'
+    if ($null -ne $value) { $script:OwnerProcessId = [int]$value }
+    $value = Get-JsonProperty -Object $params -Name 'OwnerProcessStartTime'
+    if ($null -ne $value) { $script:OwnerProcessStartTime = [string]$value }
     $value = Get-JsonProperty -Object $params -Name 'Invert'
     if ($null -ne $value) { $script:Invert = [System.Management.Automation.SwitchParameter]::new([bool]$value) }
     $value = Get-JsonProperty -Object $params -Name 'Quiet'
@@ -351,6 +374,84 @@ function Write-LoopEvent {
     Write-AtomicJson -Path $path -Value $event
 }
 
+function Test-OwnerProcessAlive {
+    if (-not $OwnerRequired -or $OwnerProcessId -le 0) {
+        return $true
+    }
+
+    $ownerProcess = Get-Process -Id $OwnerProcessId -ErrorAction SilentlyContinue
+    if (-not $ownerProcess) {
+        return $false
+    }
+
+    $expectedStart = ConvertTo-UtcDateTime -Value $OwnerProcessStartTime
+    if (-not $expectedStart) {
+        return $true
+    }
+
+    try {
+        $actualStart = $ownerProcess.StartTime.ToUniversalTime()
+        return [Math]::Abs(($actualStart - $expectedStart).TotalSeconds) -le 2
+    } catch {
+        return $true
+    }
+}
+
+function Exit-IfOwnerUnavailable {
+    param(
+        [int]$Attempt = 0,
+        [string]$Phase = 'unknown'
+    )
+
+    if (Test-OwnerProcessAlive) {
+        return
+    }
+
+    $elapsedSeconds = if ($null -ne $stopwatch) { [int]$stopwatch.Elapsed.TotalSeconds } else { 0 }
+    $remainingSeconds = if ($TimeoutSeconds -gt 0) { [Math]::Max(0, $TimeoutSeconds - $elapsedSeconds) } else { 0 }
+    Write-LoopError "owner process $OwnerProcessId exited; abandoning detached loop"
+    $result = [ordered]@{
+        schemaVersion = 1
+        timestamp = Get-UtcTimestamp
+        pid = $PID
+        attempt = $Attempt
+        elapsedSeconds = $elapsedSeconds
+        remainingSeconds = $remainingSeconds
+        checkExitCode = $null
+        loopStatus = 'abandoned'
+        status = 'ABANDONED'
+        event = 'owner_process_exited'
+        ownerRequired = [bool]$OwnerRequired
+        ownerProcessId = $OwnerProcessId
+        ownerProcessStartTime = $OwnerProcessStartTime
+        ownerCheckPhase = $Phase
+        stdout = ''
+        stderr = ''
+        terminal = $true
+    }
+    Write-LoopResult -Result $result
+    Write-LoopEvent -Kind 'abandoned' -Result $result
+    Write-LoopHeartbeat -Phase 'abandoned' -Attempt $Attempt
+    exit $ExitAbandoned
+}
+
+function Start-LoopSleep {
+    param(
+        [Parameter(Mandatory = $true)][int]$Seconds,
+        [Parameter(Mandatory = $true)][int]$Attempt,
+        [Parameter(Mandatory = $true)][string]$Phase
+    )
+
+    $remainingSleep = $Seconds
+    while ($remainingSleep -gt 0) {
+        Exit-IfOwnerUnavailable -Attempt $Attempt -Phase "${Phase}_before_sleep"
+        $chunk = [Math]::Min($remainingSleep, 5)
+        Start-Sleep -Seconds $chunk
+        Exit-IfOwnerUnavailable -Attempt $Attempt -Phase "${Phase}_after_sleep"
+        $remainingSleep -= $chunk
+    }
+}
+
 function Get-LoopAttemptFromEnv {
     if ($env:LOOP_ATTEMPT) {
         return [int]$env:LOOP_ATTEMPT
@@ -430,7 +531,9 @@ function Invoke-ActionAndAck {
 
     Write-LoopLog 'running action'
     Write-LoopHeartbeat -Phase 'action' -Attempt (Get-LoopAttemptFromEnv)
+    Exit-IfOwnerUnavailable -Attempt (Get-LoopAttemptFromEnv) -Phase 'before_action'
     $actionResult = Invoke-LoopCommand -Command $ActionCommand
+    Exit-IfOwnerUnavailable -Attempt (Get-LoopAttemptFromEnv) -Phase 'after_action'
     if ($actionResult.ExitCode -ne 0) {
         Write-LoopError "action command failed with exit $($actionResult.ExitCode)"
         $result = [ordered]@{
@@ -456,7 +559,9 @@ function Invoke-ActionAndAck {
     if ($AckCommand) {
         Write-LoopLog 'action succeeded; running ack'
         Write-LoopHeartbeat -Phase 'ack' -Attempt (Get-LoopAttemptFromEnv)
+        Exit-IfOwnerUnavailable -Attempt (Get-LoopAttemptFromEnv) -Phase 'before_ack'
         $ackResult = Invoke-LoopCommand -Command $AckCommand
+        Exit-IfOwnerUnavailable -Attempt (Get-LoopAttemptFromEnv) -Phase 'after_ack'
         if ($ackResult.ExitCode -ne 0) {
             Write-LoopError "ack command failed with exit $($ackResult.ExitCode)"
             $result = [ordered]@{
@@ -615,6 +720,9 @@ function Show-DryRun {
         heartbeat_path       = $HeartbeatPath
         event_dir            = $EventDir
         params_file          = $ParamsFile
+        owner_required       = [bool]$OwnerRequired
+        owner_process_id     = $OwnerProcessId
+        owner_process_start_time = $OwnerProcessStartTime
     } | ConvertTo-Json -Depth 3
 }
 
@@ -644,6 +752,7 @@ try {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $attempt = 0
     $currentInterval = $IntervalSeconds
+    Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'startup'
 
     while ($true) {
         $attempt++
@@ -659,9 +768,11 @@ try {
         $env:LOOP_REMAINING_SECONDS = [string]$remaining
 
         Write-LoopLog "attempt ${attempt}: running check"
+        Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'before_check'
         Write-LoopHeartbeat -Phase 'checking' -Attempt $attempt
         $checkResult = Invoke-LoopCommand -Command $CheckCommand
         $checkExit = [int]$checkResult.ExitCode
+        Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'after_check'
 
         if (Test-ConditionSucceeded -ExitCode $checkExit) {
             if ($StableForSeconds -gt 0) {
@@ -670,7 +781,7 @@ try {
                 Write-LoopResult -Result $result
                 Write-LoopLog "condition met; waiting ${StableForSeconds}s stability window"
                 Write-LoopHeartbeat -Phase 'stable_sleep' -Attempt $attempt -NextSleepSeconds $StableForSeconds -NextAttemptAfter $nextAttemptAfter
-                Start-Sleep -Seconds $StableForSeconds
+                Start-LoopSleep -Seconds $StableForSeconds -Attempt $attempt -Phase 'stable'
 
                 $attempt++
                 Remove-Item env:LOOP_CHECK_EXIT_CODE -ErrorAction SilentlyContinue
@@ -678,8 +789,10 @@ try {
                 $env:LOOP_ELAPSED_SECONDS = [string]([int]$stopwatch.Elapsed.TotalSeconds)
                 $env:LOOP_REMAINING_SECONDS = [string]$remaining
                 Write-LoopHeartbeat -Phase 'stable_checking' -Attempt $attempt
+                Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'before_stable_check'
                 $stableResult = Invoke-LoopCommand -Command $CheckCommand
                 $stableExit = [int]$stableResult.ExitCode
+                Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'after_stable_check'
                 if (-not (Test-ConditionSucceeded -ExitCode $stableExit)) {
                     Write-LoopLog "condition did not remain stable; continuing"
                     $checkResult = $stableResult
@@ -746,7 +859,9 @@ try {
             $env:LOOP_CHECK_EXIT_CODE = [string]$checkExit
             Write-LoopLog 'running on-retry hook'
             Write-LoopHeartbeat -Phase 'on_retry' -Attempt $attempt
+            Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'before_on_retry'
             $retryResult = Invoke-LoopCommand -Command $OnRetryCommand
+            Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'after_on_retry'
             if ($retryResult.ExitCode -ne 0) {
                 Write-LoopError "on-retry command failed with exit $($retryResult.ExitCode)"
                 $result = [ordered]@{
@@ -783,9 +898,10 @@ try {
         Write-LoopLog "check exited $checkExit; sleeping ${sleepSeconds}s"
         Write-LoopHeartbeat -Phase 'sleeping' -Attempt $attempt -NextSleepSeconds $sleepSeconds -NextAttemptAfter $nextAttemptAfter
         if ($sleepSeconds -gt 0) {
-            Start-Sleep -Seconds $sleepSeconds
+            Start-LoopSleep -Seconds $sleepSeconds -Attempt $attempt -Phase 'retry'
         }
         Write-LoopHeartbeat -Phase 'awake' -Attempt $attempt
+        Exit-IfOwnerUnavailable -Attempt $attempt -Phase 'after_retry_sleep'
 
         if ($BackoffFactor -gt 1) {
             $currentInterval = [Math]::Min($currentInterval * $BackoffFactor, $MaxIntervalSeconds)

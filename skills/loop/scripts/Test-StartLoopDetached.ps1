@@ -69,6 +69,17 @@ Assert-Case 'Bounded mode remains default' {
     if ($plan.watchMode -ne 'bounded') { throw "expected watchMode bounded, got '$($plan.watchMode)'" }
 }
 
+Assert-Case 'Dry run includes session-bound owner metadata' {
+    $plan = & pwsh -NoProfile -ExecutionPolicy Bypass -File $startScript `
+        -Name 'owner-metadata' `
+        -CheckCommand 'exit 1' `
+        -DryRun | ConvertFrom-Json
+
+    if (-not $plan.ownerRequired) { throw 'expected ownerRequired true' }
+    if ($plan.ownerProcessId -le 0) { throw "expected positive ownerProcessId, got $($plan.ownerProcessId)" }
+    if (-not $plan.ownerProcessStartTime) { throw 'expected ownerProcessStartTime' }
+}
+
 Write-Host ""
 Write-Host ("Summary: {0} passed, {1} failed" -f $pass, $fail) -ForegroundColor (& { if ($fail -gt 0) { 'Red' } else { 'Green' } })
 if ($fail -gt 0) { exit 1 }

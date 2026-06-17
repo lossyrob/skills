@@ -80,6 +80,7 @@ function ConvertTo-IntValue {
     if ($null -eq $Value) {
         return $Default
     }
+
     $text = ([string]$Value).Trim().Trim([char]0xFEFF).Trim()
     if (-not $text) {
         return $Default
@@ -90,6 +91,30 @@ function ConvertTo-IntValue {
     }
     if ($WarnOnInvalid) {
         Add-StatusWarning "Could not parse $Name value '$text' as an integer"
+    }
+    return $Default
+}
+
+function ConvertTo-BoolValue {
+    param(
+        [AllowNull()][object]$Value,
+        [bool]$Default = $false
+    )
+    if ($null -eq $Value) {
+        return $Default
+    }
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+    $text = ([string]$Value).Trim()
+    if (-not $text) {
+        return $Default
+    }
+    if ($text -in @('1', 'true', 'yes')) {
+        return $true
+    }
+    if ($text -in @('0', 'false', 'no')) {
+        return $false
     }
     return $Default
 }
@@ -268,10 +293,10 @@ $heartbeat = Read-JsonFile -Path $heartbeatPath
 $latestEventCandidate = Get-LatestLoopEvent -EventDir $eventDir
 $latestEventFile = $latestEventCandidate.File
 $latestEvent = $latestEventCandidate.Event
+$params = Read-JsonFile -Path $paramsPath
 
 $intervalSource = 'argument'
 if ($IntervalSeconds -le 0) {
-    $params = Read-JsonFile -Path $paramsPath
     $value = Get-JsonProperty -Object $params -Name 'IntervalSeconds'
     $IntervalSeconds = ConvertTo-IntValue -Value $value -Name 'IntervalSeconds'
     $intervalSource = if ($IntervalSeconds -gt 0) { 'params' } else { 'fallback' }
@@ -307,6 +332,25 @@ if ($heartbeatTimestamp) {
 $expectedProcessStart = ConvertTo-UtcDateTime -Value (Get-JsonProperty -Object $manifest -Name 'processStartTime') -Name 'manifest.processStartTime'
 $processStatus = Get-ProcessStatus -ProcessId $loopPid -ExpectedStartTimeUtc $expectedProcessStart
 $alive = [bool]$processStatus.alive
+$ownerRequired = ConvertTo-BoolValue -Value (Get-JsonProperty -Object $manifest -Name 'ownerRequired') -Default (ConvertTo-BoolValue -Value (Get-JsonProperty -Object $params -Name 'OwnerRequired') -Default $false)
+$ownerPid = ConvertTo-IntValue -Value (Get-JsonProperty -Object $manifest -Name 'ownerProcessId') -Name 'manifest.ownerProcessId'
+if ($ownerPid -le 0) {
+    $ownerPid = ConvertTo-IntValue -Value (Get-JsonProperty -Object $params -Name 'OwnerProcessId') -Name 'params.OwnerProcessId'
+}
+$ownerStartRaw = Get-JsonProperty -Object $manifest -Name 'ownerProcessStartTime'
+if ($null -eq $ownerStartRaw -or [string]::IsNullOrWhiteSpace([string]$ownerStartRaw)) {
+    $ownerStartRaw = Get-JsonProperty -Object $params -Name 'OwnerProcessStartTime'
+}
+$expectedOwnerStart = ConvertTo-UtcDateTime -Value $ownerStartRaw -Name 'ownerProcessStartTime'
+$ownerProcessStatus = Get-ProcessStatus -ProcessId $ownerPid -ExpectedStartTimeUtc $expectedOwnerStart
+$ownerAlive = $true
+if ($ownerRequired) {
+    if ($ownerPid -le 0 -or -not [bool]$ownerProcessStatus.exists) {
+        $ownerAlive = $false
+    } elseif ($expectedOwnerStart -and $ownerProcessStatus.startTime -and -not [bool]$ownerProcessStatus.startTimeMatches) {
+        $ownerAlive = $false
+    }
+}
 $classification = 'unknown'
 $terminal = $false
 
@@ -314,15 +358,23 @@ if ($latestEvent) {
     $eventResult = Get-JsonProperty -Object $latestEvent -Name 'result'
     $eventLoopStatus = [string](Get-JsonProperty -Object $eventResult -Name 'loopStatus')
     $terminal = [bool](Get-JsonProperty -Object $eventResult -Name 'terminal')
-    if ($eventLoopStatus -eq 'actionable') {
+    if ($eventLoopStatus -eq 'abandoned') {
+        $classification = 'abandoned'
+    } elseif ($eventLoopStatus -eq 'actionable') {
         $classification = 'actionable'
     } elseif ($terminal) {
         $classification = 'final'
     }
 }
 
+if ($ownerRequired -and -not $ownerAlive -and $alive -and $classification -ne 'final') {
+    $classification = 'abandoned'
+}
+
 if ($classification -eq 'unknown') {
-    if ($alive -and -not $heartbeat) {
+    if ($ownerRequired -and -not $ownerAlive) {
+        $classification = 'abandoned'
+    } elseif ($alive -and -not $heartbeat) {
         $classification = 'starting'
     } elseif ($alive -and $heartbeatFresh) {
         $classification = 'running'
@@ -343,6 +395,13 @@ if ($classification -eq 'unknown') {
     processStartTime = $processStatus.startTime
     expectedProcessStartTime = $processStatus.expectedStartTime
     processStartTimeMatches = $processStatus.startTimeMatches
+    ownerRequired = [bool]$ownerRequired
+    ownerProcessId = $ownerPid
+    ownerProcessAlive = [bool]$ownerAlive
+    ownerProcessExists = [bool]$ownerProcessStatus.exists
+    ownerProcessStartTime = $ownerProcessStatus.startTime
+    expectedOwnerProcessStartTime = $ownerProcessStatus.expectedStartTime
+    ownerProcessStartTimeMatches = $ownerProcessStatus.startTimeMatches
     classification = $classification
     intervalSeconds = $IntervalSeconds
     intervalSource = $intervalSource

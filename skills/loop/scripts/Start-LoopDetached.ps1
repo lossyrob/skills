@@ -35,6 +35,8 @@ param(
     [string]$Name = 'loop',
     [string]$RunDir = '',
     [string]$LockName = '',
+    [ValidateRange(0, [int]::MaxValue)]
+    [int]$OwnerProcessId = 0,
 
     [switch]$WatchUntilTerminal,
     [switch]$Invert,
@@ -164,6 +166,17 @@ function ConvertTo-PowerShellSingleQuotedString {
     "'" + ($Value -replace "'", "''") + "'"
 }
 
+function Get-ProcessStartTimeString {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        return $process.StartTime.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+    } catch {
+        Write-Warning "could not read owner process start time for PID ${ProcessId}: $_"
+        return $null
+    }
+}
+
 $safeName = ConvertTo-SafeName -Value $Name
 $runDirProvided = -not [string]::IsNullOrWhiteSpace($RunDir)
 if (-not $RunDir) {
@@ -209,6 +222,9 @@ if (-not $LockName) {
     $LockName = $safeName
 }
 
+$resolvedOwnerProcessId = if ($OwnerProcessId -gt 0) { $OwnerProcessId } else { $PID }
+$ownerProcessStartTime = Get-ProcessStartTimeString -ProcessId $resolvedOwnerProcessId
+
 $params = [ordered]@{
     CheckCommand = $CheckCommand
     ActionCommand = $ActionCommand
@@ -225,6 +241,9 @@ $params = [ordered]@{
     RetryExitCode = @($RetryExitCode)
     StopExitCode = @($StopExitCode)
     LockName = $LockName
+    OwnerRequired = $true
+    OwnerProcessId = $resolvedOwnerProcessId
+    OwnerProcessStartTime = $ownerProcessStartTime
     LastResultPath = $lastResultPath
     HeartbeatPath = $heartbeatPath
     EventDir = $eventDir
@@ -275,6 +294,9 @@ $plan = [ordered]@{
     command = $powershell
     arguments = $arguments
     argumentString = $argumentString
+    ownerRequired = $true
+    ownerProcessId = $resolvedOwnerProcessId
+    ownerProcessStartTime = $ownerProcessStartTime
 }
 
 if ($DryRun) {

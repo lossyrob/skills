@@ -14,8 +14,8 @@ param(
     [ValidateRange(0, [int]::MaxValue)]
     [int]$GraceSeconds = 30,
 
-    [ValidateSet('final', 'actionable', 'crashed')]
-    [string[]]$TerminalClassification = @('final', 'actionable', 'crashed'),
+    [ValidateSet('final', 'actionable', 'crashed', 'abandoned')]
+    [string[]]$TerminalClassification = @('final', 'actionable', 'crashed', 'abandoned'),
 
     [ValidateRange(0, [int]::MaxValue)]
     [int]$StalledPollsToExit = 3,
@@ -37,6 +37,7 @@ $ExitWaiterInternalError = 121
 $ExitWaiterTimeout = 122
 $ExitLoopTimeout = 124
 $ExitStalled = 125
+$ExitAbandoned = 125
 
 function Write-WaiterError {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -258,7 +259,9 @@ function Get-DurableLoopFallback {
     if ($sourceResult) {
         $loopStatusText = ([string](Get-JsonProperty -Object $sourceResult -Name 'loopStatus')).ToLowerInvariant()
         $terminal = [bool](Get-JsonProperty -Object $sourceResult -Name 'terminal')
-        if ($loopStatusText -eq 'actionable') {
+        if ($loopStatusText -eq 'abandoned') {
+            $classification = 'abandoned'
+        } elseif ($loopStatusText -eq 'actionable') {
             $classification = 'actionable'
         } elseif ($terminal) {
             $classification = 'final'
@@ -309,12 +312,16 @@ function Get-WaiterExitCode {
         'crashed' {
             return $ExitGeneral
         }
+        'abandoned' {
+            return $ExitAbandoned
+        }
         'final' {
             switch ($loopStatus) {
                 'success' { return 0 }
                 'action_completed' { return 0 }
                 'timeout' { return $ExitLoopTimeout }
                 'fatal' { return $ExitNoCommand }
+                'abandoned' { return $ExitAbandoned }
                 'action_failed' {
                     $actionExitCode = ConvertTo-PositiveInt -Value (Get-JsonProperty -Object $result -Name 'actionExitCode') -Default 0
                     if ($actionExitCode -gt 0) { return $actionExitCode }
@@ -365,7 +372,7 @@ function New-LastWakeMetadata {
     param([Parameter(Mandatory = $true)][object]$Status)
 
     $classification = ([string](Get-JsonProperty -Object $Status -Name 'classification')).ToLowerInvariant()
-    if ($classification -notin @('actionable', 'final')) {
+    if ($classification -notin @('actionable', 'final', 'abandoned')) {
         return $null
     }
 
@@ -397,11 +404,14 @@ function New-LastWakeMetadata {
         if ($null -eq $exitCode -or $exitCode -le 0) {
             $exitCode = $ExitGeneral
         }
+    } elseif ($classification -eq 'abandoned') {
+        $exitCode = $ExitAbandoned
     } elseif ($classification -eq 'final') {
         switch ($loopStatus.ToLowerInvariant()) {
             'success' { $exitCode = 0 }
             'action_completed' { $exitCode = 0 }
             'timeout' { $exitCode = $ExitLoopTimeout }
+            'abandoned' { $exitCode = $ExitAbandoned }
             default {
                 if ($null -eq $exitCode) {
                     $exitCode = $ExitGeneral
@@ -644,7 +654,7 @@ while ($true) {
 
         if ($durableStatus) {
             $durableClassification = ([string](Get-JsonProperty -Object $durableStatus -Name 'classification')).ToLowerInvariant()
-            if ($durableClassification -in @('actionable', 'final')) {
+            if ($durableClassification -in @('actionable', 'final', 'abandoned')) {
                 # Recovered a real lifecycle event from durable state — exit
                 # through the normal path so the agent sees the same JSON
                 # shape and exit code it would have gotten on a clean read.
