@@ -101,6 +101,23 @@ Operate PAW implementer and reviewer GitHub PR lifecycle loops on top of the `lo
 
 **Requirements:** PowerShell 7+ on any OS, GitHub CLI authenticated against `github.com`, and the sibling [`loop`](#loop) skill (≥ 0.1.12).
 
+### backlog-orchestrator
+
+Drive a backlog of GitHub issues to PRs autonomously and sequentially. The loaded session becomes an orchestrator that triages issues into S/M/L tiers, spawns PAW implementer (and optional PAW Review) worker terminals that coordinate over [telex](https://github.com/lossyrob/telex) instead of GitHub-comment polling, gates each PR through a preference/human-floor merge review, and auto-merges or routes to human review.
+
+**Trigger phrases:** "work through a backlog of issues autonomously", "run an autonomous issue-fixing pipeline", "orchestrate PAW sessions across many issues", "drive these issues to PRs"
+
+**Features:**
+- Four-phase model: telex station setup → interactive triage (S/M/L sizing + per-tier config) → sequential per-issue execution → merge gate + advance
+- Spawns an implementer (paw-lite, loaded as a skill) and an optional reviewer (launched as the `PAW-Review` agent with autonomous review submission) in their own terminals via [`launch-copilot-terminal`](#launch-copilot-terminal); they run the review handshake over telex (review-ready → review-posted → re-review → `🐾 +1`), not GitHub-comment polling
+- Last-line **merge gate**: an Opus subagent detects high-spread *preference forks* the builder should own (a filtered work-geometry lens, not a correctness re-review), tuned by a per-issue care-knob — auto-merges clear/low-spread PRs and routes preference-debt / constitution / human-floor PRs to human review
+- **Deferred-work tracking**: every carry-forward item is harvested at the gate (field report + diff markers) and driven to a terminal disposition (filed / folded / skipped / done / moot) — the run is not complete while any item is open
+- **Deferred human-review holds**: a PR routed to you stays live — the implementer's merge sentry keeps it mergeable (repairing CI/conflicts) until you merge, then reports back for stand-down
+- Field reports on each issue + a run ledger; a final report bubbles up pivots, preference debt, no-auto-merge decisions, deferred work, and learnings, plus a `process-feedback` → skill-improvement loop
+- Durable telex backend pinning so messages survive holder restarts and wake idle worker sessions
+
+**Requirements:** Windows + Windows Terminal (for `launch-copilot-terminal`), Copilot CLI on `PATH`, [telex](https://github.com/lossyrob/telex) on `PATH`, GitHub CLI authenticated for the target repo, and the installed skills [`launch-copilot-terminal`](#launch-copilot-terminal), [`paw-pr-lifecycle`](#paw-pr-lifecycle), [`loop`](#loop), [`spar`](#spar), plus the PAW workflow skills (paw-lite / paw-review-workflow) and the `PAW-Review` custom agent.
+
 ### spar
 
 Get a sharp second opinion from a different model before committing to a consequential decision. A pairing-style critique skill run as **sparring rounds**: it keeps the structure of pair programming (shared goal, two perspectives per decision, the driver holds the pen) but drops the ego-protecting hedging that turns review into a rubber stamp, since there is no human ego to protect between agents.
