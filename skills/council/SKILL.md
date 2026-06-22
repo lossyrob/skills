@@ -97,12 +97,14 @@ it in the minority report or reopen conditions instead of spinning.
 4. **Create the artifact set.** Put it outside the repository unless the operator
    explicitly asks for a committed artifact. Use separate files for the brief,
    transcript, synthesis, and optional state metadata.
-5. **Launch the contained council.** Give agents the brief path, transcript path,
-   synthesis path, role cards, and file protocol. Do not relay each round through
-   the main session.
-6. **Let the council deliberate autonomously.** Agents run an isolated panel first,
-   then escalate to the lightest interaction primitive that targets live
-   disagreement. They write their own transcript and final synthesis.
+5. **Launch one contained council-runner.** Give it the brief, transcript, and
+   synthesis paths. The runner spawns the members itself, runs the rounds in its
+   own context, and returns only the synthesis path. The main session does not
+   launch members or relay rounds (see Artifacts and containment).
+6. **Let the council deliberate contained.** The runner runs an isolated panel
+   first, then escalates to the lightest interaction primitive that targets live
+   disagreement, flushing each turn to the transcript and writing the final
+   synthesis.
 7. **Read the synthesis, including its dissent, by default.** The main session
    integrates or briefs back from the synthesis artifact, and always reads the
    bounded `minority_report` and `reopen_conditions` fields so dissent is never
@@ -113,8 +115,17 @@ it in the minority report or reopen conditions instead of spinning.
 
 ## Roster and model selection
 
-- Prefer **model diversity** over prompt-only persona diversity when the decision
-  is hard or open-ended.
+- **Persona diversity is the guaranteed floor; model diversity is requested, not
+  guaranteed.** Personas live in the role cards you control and are always
+  delivered. A requested member model may silently fall back to a default model
+  with no error, and the runtime exposes no way for a member to verify which
+  model it is. Prefer model diversity for hard open-ended decisions, but never
+  present it as a guarantee, and never rely on a member self-reporting its model
+  as proof.
+- Have each member self-report its `provider_family` (with `unsure` allowed) and
+  record it in the synthesis provenance manifest. Treat a mismatch against the
+  requested model -- especially a non-Claude/non-GPT request reporting Claude --
+  as a fallback signal to log and warn, not as verification either way.
 - Keep panel members close enough in capability that one model does not dominate
   the others by prestige. If a model is much weaker, use it as a focused critic,
   fact-checker, or peripheral reviewer, not an equal voter.
@@ -135,7 +146,8 @@ Every council member should output a structured turn:
 
 ```yaml
 agent_id: short-stable-id
-model: actual-model-used
+model: requested-model-id
+provider_family: self-reported provider/family/tier, or "unsure" (a weak probe, not proof)
 persona: role or specialist name
 epistemic_act: PROPOSE | SUPPORT | CHALLENGE | REFINE | CONCEDE | SYNTHESIZE
 key_claim: one-sentence claim
@@ -212,44 +224,64 @@ before starting.
 
 ## Artifacts and containment
 
-The council's inner deliberation should stay out of the main session context by
-default. The main session launches the council, waits for completion through the
-normal Copilot CLI subagent lifecycle, reads the synthesis artifact, and briefs
-or integrates from that synthesis. The transcript remains auditable, but it is
-not absorbed into the driver context unless there is a reason.
+The council's inner deliberation must stay out of the main session context by
+default. The main session launches one contained runner, waits for completion
+through the normal Copilot CLI subagent lifecycle, reads only the synthesis
+artifact, and briefs or integrates from it. The transcript stays auditable on
+disk but is not absorbed into the driver context unless there is a reason.
 
 Use an artifact set:
 
 ```text
 council-<id>/
   brief.md        # curated context pack for all council members
-  transcript.md   # full deliberation, not read by the main session by default
-  synthesis.md    # concise recommendation packet read by the main session
-  state.json      # optional status, timestamps, agent ids, artifact paths
+  transcript.md   # full deliberation, flushed turn-by-turn, not read by the driver by default
+  synthesis.md    # recommendation packet (with provenance manifest) read by the driver
+  state.json      # optional status, timestamps, member ids, artifact paths
 ```
 
-### Default: autonomous contained council
+### Default: contained council-runner (Pattern B)
 
-Use this for ordinary councils:
+The driver launches a SINGLE council-runner subagent that owns the whole council
+in its own context and returns only the synthesis path. This is the default
+because it both maximizes containment and removes the peer-coordination machinery
+(no shared-file locks, turn tokens, or stale-lock recovery): the runner is one
+in-context coordinator.
 
-1. The driver writes `brief.md` with the decision frame, relevant context,
-   constraints, options, non-goals, links to source artifacts, roster, depth, and
-   output requirements.
-2. The driver launches council agents in parallel or as configured, passing them
-   paths to `brief.md`, `transcript.md`, `synthesis.md`, and `state.json` if used.
-3. Agents coordinate through the transcript artifact and write the final
-   synthesis artifact. The main session does not relay rounds or read the
-   transcript as part of normal operation.
-4. Copilot CLI's existing subagent lifecycle and notifications handle long-running
-   work. If the run appears stale, the main session may inspect timestamps,
-   state, or agent status, but liveness supervision is not the council's core
-   deliberation protocol.
-5. The main session reads `synthesis.md`, reports the conclusion, and provides
-   the transcript path for audit.
+1. The driver writes `brief.md` (decision frame, context, options, non-goals,
+   linked artifacts, roster, depth, mode, required output).
+2. The driver launches ONE runner subagent, passing the brief, transcript, and
+   synthesis paths. It does not launch members itself and does not relay rounds.
+3. The runner spawns the members as nested subagents (each with its requested
+   model and role card), runs an isolated panel round first, then escalates to
+   the lightest interaction primitive only if material disagreement remains
+   (max 2-3 rounds; stop at sharper convergence or a named irreducible).
+4. The runner **flushes each member turn to `transcript.md` as it happens**
+   (mandatory), so a hung, dropped, or silently-fallen-back member leaves
+   recoverable state instead of a silent void. Containment means "the driver does
+   not read the rounds," never "the rounds are unrecoverable."
+5. The runner writes `synthesis.md` as rapporteur, including the provenance
+   manifest, then obtains a faithfulness check from a member it did not author the
+   synthesis as. It returns to the driver only the synthesis path plus a short
+   meta report (rounds run, members + requested models, nesting outcome, any
+   errors) -- no round contents, no synthesis body.
+6. The driver reads `synthesis.md`, always surfaces its `minority_report` and
+   `reopen_conditions`, reports the conclusion, and provides the transcript path
+   for audit.
 
-This default optimizes for context hygiene: the main session is influenced by the
-council's conclusion, not by every intermediate argument, persona, tangent, or
-recency effect from the debate.
+This optimizes for context hygiene: the driver is influenced by the council's
+conclusion and provenance, not by every intermediate argument, persona, tangent,
+or recency effect from the debate.
+
+### Fallback: driver-launched peers (Pattern A)
+
+If a runtime forbids nested subagent spawning, the driver launches the members
+directly in parallel and they self-coordinate by appending turns to a shared
+`transcript.md` under a lock/turn/state protocol; the driver still waits and reads
+only the synthesis. This trades the contained runner's simplicity for the
+peer-coordination machinery in the transcript protocol below, and it puts the
+roster and launches in the driver's context. Use it only when nesting is
+unavailable.
 
 ### Context packs
 
@@ -278,28 +310,23 @@ and mark context gaps instead of guessing.
 
 ### Transcript protocol
 
-For supervised dogfood, a Markdown transcript with a small state header is
-acceptable. For stronger runs, prefer append-only JSONL plus a rendered Markdown
-summary. The transcript or state file should include enough metadata for the main
-session or user to inspect progress:
+Under Pattern B the runner is the single writer, so no locking is needed: it
+**must flush each member turn to `transcript.md` as it completes** (mandatory),
+with the member id, requested model, persona, round number, and a timestamp.
+Incremental flush is what keeps "contained" from meaning "opaque" -- it leaves
+recoverable state if the runner hangs or a member is dropped. A Markdown
+transcript is fine; append-only JSONL plus a rendered summary is better for large
+councils.
 
-- append-only transcript entries or JSONL events;
-- immutable turn IDs or a monotonic sequence counter;
-- agent ids, models, personas, and round numbers;
-- timestamps for each turn and, if useful, heartbeat/progress metadata;
-- maximum rounds, wall-clock expectations, and explicit `done` / `failed` states;
-- a single named owner of the terminal-state transition, which must be written
-  while holding the lock;
-- a stale-lock rule: any member may break the lock when the state header's last
-  update timestamp exceeds a stated TTL, so a crashed lock-holder cannot deadlock
-  the council;
-- transcript path and synthesis path;
-- required final synthesis before the main agent acts.
+Do not overbuild subagent lifecycle handling. If the runner hangs, use Copilot
+CLI's existing subagent status/notification behavior plus the transcript
+timestamps to decide whether to wait, inspect, or terminate. The skill defines
+deliberation and artifacts; it does not replace the host's subagent manager.
 
-Do not overbuild subagent lifecycle handling in the skill. If an agent hangs, use
-Copilot CLI's existing subagent status/notification behavior and the artifact
-timestamps to decide whether to wait, inspect, or terminate. The skill's job is
-to define deliberation and artifacts, not to replace the host's subagent manager.
+The peer-coordination machinery -- a lock/turn protocol, a monotonic sequence
+counter, a single named terminal-state owner, and a stale-lock TTL so a crashed
+holder cannot deadlock the council -- is needed ONLY for the Pattern A fallback,
+where multiple members write the same transcript. Pattern B does not use it.
 
 ### Audit model
 
@@ -316,6 +343,11 @@ Read the raw transcript when:
 - the synthesis is internally inconsistent or missing required fields;
 - the run failed, timed out, or appears stale;
 - a faithfulness check disputes the synthesis packet;
+- a member's reported `provider_family` does not match its requested model
+  (silent-fallback signal), or a non-Claude/non-GPT request reports Claude;
+- the provenance manifest lists fewer members than requested, or a member turn is
+  missing from the transcript;
+- the runner returns a synthesis without a transcript flushed to the known path;
 - the driver needs to verify a specific claim before acting.
 
 ## Synthesis packet
@@ -353,16 +385,27 @@ faithfulness_check:
   by: agent id of a non-author member, or "independent-rapporteur"
   verdict: SUPPORT | DISPUTE
   note: one line asserting the packet matches the transcript
+provenance_manifest:
+  - member: agent id
+    requested_model: the model id the runner asked for
+    persona: role or specialist name
+    provider_family: self-reported, or "unsure"
+    model_identity: UNVERIFIED   # the runtime cannot confirm which model ran
+    fallback_suspected: yes | no   # provider_family mismatches requested model
 brief_path: path to the context pack
 transcript_path: path to the artifact
 synthesis_path: path to this packet
 ```
 
 `recommendation`, `confidence`, `decisive_arguments` with their `source_agents`,
-`minority_report`, `reopen_conditions`, `audit_triggers`, and the artifact paths
-are required fields. `minority_report` and `reopen_conditions` are never omitted:
-if there is genuinely no dissent, state that explicitly rather than dropping the
-field. A synthesis missing any required field is itself an audit trigger.
+`minority_report`, `reopen_conditions`, `audit_triggers`, the `provenance_manifest`,
+and the artifact paths are required fields. `minority_report` and
+`reopen_conditions` are never omitted: if there is genuinely no dissent, state that
+explicitly rather than dropping the field. The `provenance_manifest` records, per
+member, the requested model and self-reported `provider_family` with
+`model_identity: UNVERIFIED`, so the driver sees the requested roster and any
+suspected silent fallback without trusting model identity as fact. A synthesis
+missing any required field is itself an audit trigger.
 
 The rapporteur may merge, deduplicate, classify, and recommend. It must not
 erase dissent, invent new findings that no member raised, or pretend that
