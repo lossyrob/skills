@@ -96,7 +96,7 @@ function Get-AdoErrorStatusCode {
     [object]$ErrorRecord
   )
 
-  $response = $ErrorRecord.Exception.Response
+  $response = Get-LoopProperty (Get-LoopProperty $ErrorRecord "Exception") "Response"
   if ($null -ne $response) {
     $statusCode = Get-LoopProperty $response "StatusCode"
     if ($null -ne $statusCode) {
@@ -104,7 +104,7 @@ function Get-AdoErrorStatusCode {
     }
   }
 
-  $message = [string]$ErrorRecord.Exception.Message
+  $message = [string](Get-LoopProperty (Get-LoopProperty $ErrorRecord "Exception") "Message")
   if ($message -match "Response status code does not indicate success:\s*(?<code>\d{3})") {
     return [int]$matches["code"]
   }
@@ -123,7 +123,7 @@ function Test-AdoTransientError {
     return $true
   }
 
-  $message = [string]$ErrorRecord.Exception.Message
+  $message = [string](Get-LoopProperty (Get-LoopProperty $ErrorRecord "Exception") "Message")
   return $message -match "(?i)(timeout|timed out|connection reset|connection refused|temporarily unavailable|service unavailable|gateway timeout)"
 }
 
