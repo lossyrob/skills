@@ -240,13 +240,13 @@ council-<id>/
   state.json      # optional status, timestamps, member ids, artifact paths
 ```
 
-### Default: contained council-runner (Pattern B)
+### The contained council-runner
 
 The driver launches a SINGLE council-runner subagent that owns the whole council
-in its own context and returns only the synthesis path. This is the default
-because it both maximizes containment and removes the peer-coordination machinery
-(no shared-file locks, turn tokens, or stale-lock recovery): the runner is one
-in-context coordinator.
+in its own context and returns only the synthesis path. One in-context
+coordinator means there is no peer-coordination machinery at all -- no
+shared-file locks, turn tokens, or stale-lock recovery. The council requires a
+runtime where a subagent can spawn nested subagents (the members).
 
 1. The driver writes `brief.md` (decision frame, context, options, non-goals,
    linked artifacts, roster, depth, mode, required output).
@@ -273,15 +273,27 @@ This optimizes for context hygiene: the driver is influenced by the council's
 conclusion and provenance, not by every intermediate argument, persona, tangent,
 or recency effect from the debate.
 
-### Fallback: driver-launched peers (Pattern A)
+### Optional: mid-run checkpoint (opt-in, default off)
 
-If a runtime forbids nested subagent spawning, the driver launches the members
-directly in parallel and they self-coordinate by appending turns to a shared
-`transcript.md` under a lock/turn/state protocol; the driver still waits and reads
-only the synthesis. This trades the contained runner's simplicity for the
-peer-coordination machinery in the transcript protocol below, and it puts the
-roster and launches in the driver's context. Use it only when nesting is
-unavailable.
+By default the runner runs to completion and the driver sees only the synthesis,
+which trades away the ability to redirect mid-run. When that option is worth a
+small context cost -- high stakes with wide-open framing -- turn on a single
+gated checkpoint.
+
+Mechanism: launch the runner as a background agent. At the panel-to-interaction
+boundary it pauses and returns a bounded note; the driver may send at most one
+steering line with `write_agent`; the runner resumes contained. The driver still
+never reads member turns.
+
+Terse on-switch to drop into the brief or the runner prompt:
+
+    Checkpoint: ON. After the isolated panel, if finding spread x stakes is high,
+    pause and return a <=8-line note (emerging CORE items + any fork). Accept at
+    most one optional steering line, then resume contained. If spread x stakes is
+    low, skip the pause and continue.
+
+Leave it out for fully contained runs. Keep the note bounded -- emerging CORE
+items and forks only, never member turns.
 
 ### Context packs
 
@@ -296,6 +308,8 @@ Default `brief.md` contents:
 - constraints, success criteria, non-goals, and known risks;
 - relevant files, diffs, issues, PRs, research reports, transcripts, or session
   artifacts by path;
+- the specific surfaces, sub-questions, or artifacts each member must cover -- a
+  coverage checklist, so recall is structured rather than emergent;
 - prior conclusions the council should treat as context, not as authority;
 - roster, roles, models, depth, and mode;
 - required output packet and audit triggers.
@@ -310,7 +324,7 @@ and mark context gaps instead of guessing.
 
 ### Transcript protocol
 
-Under Pattern B the runner is the single writer, so no locking is needed: it
+The runner is the single writer, so no locking is needed: it
 **must flush each member turn to `transcript.md` as it completes** (mandatory),
 with the member id, requested model, persona, round number, and a timestamp.
 Incremental flush is what keeps "contained" from meaning "opaque" -- it leaves
@@ -322,11 +336,6 @@ Do not overbuild subagent lifecycle handling. If the runner hangs, use Copilot
 CLI's existing subagent status/notification behavior plus the transcript
 timestamps to decide whether to wait, inspect, or terminate. The skill defines
 deliberation and artifacts; it does not replace the host's subagent manager.
-
-The peer-coordination machinery -- a lock/turn protocol, a monotonic sequence
-counter, a single named terminal-state owner, and a stale-lock TTL so a crashed
-holder cannot deadlock the council -- is needed ONLY for the Pattern A fallback,
-where multiple members write the same transcript. Pattern B does not use it.
 
 ### Audit model
 
@@ -348,6 +357,8 @@ Read the raw transcript when:
 - the provenance manifest lists fewer members than requested, or a member turn is
   missing from the transcript;
 - the runner returns a synthesis without a transcript flushed to the known path;
+- the coverage manifest leaves a brief-listed surface not-examined (decide
+  whether that gap matters before acting);
 - the driver needs to verify a specific claim before acting.
 
 ## Synthesis packet
@@ -375,6 +386,10 @@ minority_report:
 parked:
   - topic: ...
     why_parked: recorded but not allowed to steer this decision
+coverage_manifest:
+  - surface: a brief-listed surface, sub-question, or artifact
+    status: core-finding | examined-passed | not-examined
+    by: member id(s) that covered it
 open_questions:
   - ...
 reopen_conditions:
@@ -399,7 +414,10 @@ synthesis_path: path to this packet
 
 `recommendation`, `confidence`, `decisive_arguments` with their `source_agents`,
 `minority_report`, `reopen_conditions`, `audit_triggers`, the `provenance_manifest`,
-and the artifact paths are required fields. `minority_report` and
+the `coverage_manifest`, and the artifact paths are required fields. The
+`coverage_manifest` maps each brief-listed surface to core-finding,
+examined-passed, or not-examined, so recall is checkable and blind spots are
+visible rather than silent. `minority_report` and
 `reopen_conditions` are never omitted: if there is genuinely no dissent, state that
 explicitly rather than dropping the field. The `provenance_manifest` records, per
 member, the requested model and self-reported `provider_family` with
