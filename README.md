@@ -22,6 +22,23 @@ copilot plugin install lossyrob-skills@lossyrob-skills
 
 ## Skills
 
+### council
+
+Convene a bounded multi-model, multi-perspective deliberation to produce a recommendation with confidence, preserved dissent, and a transcript. Useful when a consequential decision benefits from independent perspectives, collaboration, and focused contest rather than another single-model critique loop.
+
+**Trigger phrases:** "council", "panel", "deliberate", "multi-agent review", "advisory council", "get diverse perspectives", "discuss this with specialists"
+
+**Features:**
+- Gated, not ambient: use only when diversity, adversarial testing, or synthesis is likely to beat a single frontier model with enough reasoning time
+- Adaptive primitives: starts with an isolated **panel**, then escalates only if needed into **deliberate**, **debate**, **spar**, **red-team**, or **delphi** modes
+- Focus-conserving: holds a decision vector, classifies findings CORE/ADJACENT/PARKED, rewards sharper claims over disagreement-for-its-own-sake, and weights grounding over delivered confidence to prevent drift into tangential spikes
+- Dynamic roster: accepts user- or driver-chosen models, personas, PAW SoT specialists, and perspective overlays; prefers heterogeneous frontier models when available
+- Dissent-preserving synthesis: returns a required-field packet (recommendation, confidence basis, decisive arguments with sources, minority report, open questions, reopen conditions, audit triggers, artifact paths); the main session always surfaces minority report and reopen conditions, and a faithfulness check guards rapporteur fidelity
+- Context containment: defaults to autonomous artifact-mediated councils with separate brief, transcript, synthesis, and optional state files; the main session reads synthesis by default and audits the transcript on request
+- Three execution modes: **integrate**, **brief-back**, and **artifact-only**
+
+**Requirements:** Copilot CLI with the `task` subagent tool and at least one strong model. Multi-model councils need more than one available model; single-model councils can still use persona diversity, but should disclose the weaker diversity signal.
+
 ### launch-copilot-terminal
 
 Launch a new Windows Terminal tab running Copilot CLI with a requested title, tab color, and working directory. Supports a prompt-driven interactive session, an existing-session resume, and targeting either a separate window or the current Windows Terminal window. Useful for starting parallel Copilot sessions, focused worker windows, or opening a resumed session beside the current one.

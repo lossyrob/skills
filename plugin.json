@@ -1,11 +1,11 @@
 {
   "name": "lossyrob-skills",
   "description": "Reusable Copilot CLI skills by lossyrob",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "author": {
     "name": "Rob Emanuele"
   },
   "license": "MIT",
-  "keywords": ["copilot", "skills", "session", "odt", "loop", "wait", "poll", "terminal", "windows", "launch", "paw", "pr-lifecycle", "implementer", "reviewer", "spar", "pairing", "critique", "rubber-duck", "second-opinion", "orchestrator", "backlog", "telex", "autonomous", "issues"],
+  "keywords": ["copilot", "skills", "session", "odt", "loop", "wait", "poll", "terminal", "windows", "launch", "paw", "pr-lifecycle", "implementer", "reviewer", "spar", "pairing", "critique", "rubber-duck", "second-opinion", "orchestrator", "backlog", "telex", "autonomous", "issues", "council", "panel", "deliberation", "multi-agent", "debate", "dissent", "synthesis"],
   "skills": "skills/"
 }
