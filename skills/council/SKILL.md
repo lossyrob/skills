@@ -273,27 +273,39 @@ This optimizes for context hygiene: the driver is influenced by the council's
 conclusion and provenance, not by every intermediate argument, persona, tangent,
 or recency effect from the debate.
 
-### Optional: mid-run checkpoint (opt-in, default off)
+### Check-in posture (default: light, contained)
 
-By default the runner runs to completion and the driver sees only the synthesis,
-which trades away the ability to redirect mid-run. When that option is worth a
-small context cost -- high stakes with wide-open framing -- turn on a single
-gated checkpoint.
+By default the council is **contained**: the runner judges with what the brief
+gives it and the driver sees only the synthesis. The one exception is a **bounded
+context-request** -- when the panel surfaces a *material* fact the brief did not
+supply (the kind of gap that would otherwise force a low-confidence or
+assumption-laden finding), the runner may pause once at the panel-to-interaction
+boundary and ask the driver for it. The driver answers with the fact or says
+"proceed with what you have," and an unfilled gap is recorded as a stated
+assumption in the synthesis (`open_questions` / `reopen_conditions`). This is rare
+by design, batched into at most one request, and never pulls the deliberation into
+the driver's context -- only a targeted gap-fill. It does not make the driver the
+round orchestrator; the runner still owns every round.
 
-Mechanism: launch the runner as a background agent. At the panel-to-interaction
-boundary it pauses and returns a bounded note; the driver may send at most one
-steering line with `write_agent`; the runner resumes contained. The driver still
-never reads member turns.
+Mechanism: launch the runner as a background agent so it can pause and resume; a
+context-request comes back as a tagged intermediate return (`NEED-CONTEXT: ...`),
+the driver replies once with `write_agent`, and the runner continues. A council
+that needs nothing just returns the synthesis.
 
-Terse on-switch to drop into the brief or the runner prompt:
+This default is a **posture, not a guardrail**, and the operator sets it in either
+direction. Explicit operator direction always wins -- never treat containment as a
+reason to withhold a check-in the operator asked for:
 
-    Checkpoint: ON. After the isolated panel, if finding spread x stakes is high,
-    pause and return a <=8-line note (emerging CORE items + any fork). Accept at
-    most one optional steering line, then resume contained. If spread x stakes is
-    low, skip the pause and continue.
+- **Quieter -- "closed council"** (or "sealed"): the runner never asks; it records
+  any gap as an assumption and judges on the brief alone.
+- **Default:** light, material-gap context-requests only, as above.
+- **More involved:** if the operator asks to be checked in with, to see emerging
+  forks, or to be brought in on a high-spread call (e.g., "check in with me at the
+  boundary," "surface any fork to me," "ask me freely"), do exactly that -- pause,
+  return a bounded note (emerging CORE items + the fork), take the steer, resume.
 
-Leave it out for fully contained runs. Keep the note bounded -- emerging CORE
-items and forks only, never member turns.
+Whatever the posture, keep what crosses back to the driver bounded -- a specific
+question, a fork, or a short note, never the rounds.
 
 ### Context packs
 
@@ -359,6 +371,8 @@ Read the raw transcript when:
 - the runner returns a synthesis without a transcript flushed to the known path;
 - the coverage manifest leaves a brief-listed surface not-examined (decide
   whether that gap matters before acting);
+- the synthesis records a material context gap the brief did not supply (a signal
+  the brief was thin, whether or not it was filled);
 - the driver needs to verify a specific claim before acting.
 
 ## Synthesis packet
