@@ -340,9 +340,9 @@ The runner is the single writer, so no locking is needed: it
 **must flush each member turn to `transcript.md` as it completes** (mandatory),
 with the member id, requested model, persona, round number, and a timestamp.
 Incremental flush is what keeps "contained" from meaning "opaque" -- it leaves
-recoverable state if the runner hangs or a member is dropped. A Markdown
-transcript is fine; append-only JSONL plus a rendered summary is better for large
-councils.
+recoverable state if the runner hangs or a member is dropped. A plain Markdown
+transcript is all that is needed -- the single writer means no structured event
+format or sequence bookkeeping is required.
 
 Do not overbuild subagent lifecycle handling. If the runner hangs, use Copilot
 CLI's existing subagent status/notification behavior plus the transcript
