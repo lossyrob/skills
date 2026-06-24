@@ -76,6 +76,104 @@ function Get-PrReferenceRepo {
   return "$ownerLogin/$name"
 }
 
+function New-ExternalPrCandidate {
+  param(
+    [Parameter(Mandatory)]
+    [string]$Provider,
+
+    [Parameter(Mandatory)]
+    [string]$Url,
+
+    [Parameter(Mandatory)]
+    [int]$Number,
+
+    [AllowNull()]
+    [string]$Organization,
+
+    [AllowNull()]
+    [string]$Project,
+
+    [AllowNull()]
+    [string]$Repository,
+
+    [AllowNull()]
+    [object]$Comment
+  )
+
+  return [pscustomobject]@{
+    provider = $Provider
+    number = $Number
+    organization = $Organization
+    project = $Project
+    repository = $Repository
+    url = $Url
+    source = "issue_comments_external_pr_link"
+    commentUrl = Get-LoopCommentUrl $Comment
+    commentAuthor = Get-LoopCommentAuthorLogin $Comment
+    createdAt = ConvertTo-LoopDateTimeOffset (Get-LoopCommentCreatedAt $Comment)
+  }
+}
+
+function Get-ExternalPrCandidatesFromIssueComments {
+  param(
+    [Parameter(Mandatory)]
+    [string]$IssueRepo,
+
+    [Parameter(Mandatory)]
+    [int]$IssueNumber
+  )
+
+  $comments = Get-LoopIssueComments -Repo $IssueRepo -IssueOrPullRequest $IssueNumber
+  $externalCandidates = @()
+  $seenUrls = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  $patterns = @(
+    @{
+      Provider = "azure-devops"
+      Regex = "https://dev\.azure\.com/(?<organization>[^/\s]+)/(?<project>[^/\s]+)/_git/(?<repository>[^/\s]+)/pullrequest/(?<number>\d+)(?=$|[\s\)\]\}>,])"
+    },
+    @{
+      Provider = "azure-devops"
+      Regex = "https://(?<organization>[^./\s]+)\.visualstudio\.com/(?<project>[^/\s]+)/_git/(?<repository>[^/\s]+)/pullrequest/(?<number>\d+)(?=$|[\s\)\]\}>,])"
+    },
+    @{
+      Provider = "github"
+      Regex = "https://github\.com/(?<organization>[^/\s]+)/(?<repository>[^/\s]+)/pull/(?<number>\d+)(?=$|[\s\)\]\}>,])"
+    }
+  )
+
+  foreach ($comment in (ConvertTo-LoopArray $comments)) {
+    $body = [string](Get-LoopProperty $comment "body")
+    if ([string]::IsNullOrWhiteSpace($body)) {
+      continue
+    }
+
+    foreach ($pattern in $patterns) {
+      foreach ($match in [regex]::Matches($body, [string]$pattern["Regex"], [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        $url = $match.Value
+        if (-not $seenUrls.Add($url)) {
+          continue
+        }
+
+        $project = $null
+        if ($match.Groups["project"].Success) {
+          $project = [uri]::UnescapeDataString($match.Groups["project"].Value)
+        }
+
+        $externalCandidates += New-ExternalPrCandidate `
+          -Provider ([string]$pattern["Provider"]) `
+          -Url $url `
+          -Number ([int]$match.Groups["number"].Value) `
+          -Organization ([uri]::UnescapeDataString($match.Groups["organization"].Value)) `
+          -Project $project `
+          -Repository ([uri]::UnescapeDataString($match.Groups["repository"].Value)) `
+          -Comment $comment
+      }
+    }
+  }
+
+  return ,@($externalCandidates)
+}
+
 try {
   Assert-LoopGhUser -GhUser $GhUser
   $issueView = $null
@@ -216,6 +314,43 @@ try {
       baseBranch = $baseBranchFilter
       candidateCount = $strongFallbackCandidates.Count
       candidates = @($strongFallbackCandidates | Sort-Object @{ Expression = "score"; Descending = $true }, @{ Expression = "updatedAt"; Descending = $true } | Select-Object repo, number, state, baseRefName, source, score, hasClosingReference, hasTitleReference, hasBodyReference, url, title)
+    }) -ExitCode $script:LoopStopExitCode
+  }
+
+  $externalCandidates = Get-ExternalPrCandidatesFromIssueComments -IssueRepo $Repo -IssueNumber $Issue
+  if ($externalCandidates.Count -eq 1) {
+    $selected = $externalCandidates | Select-Object -First 1
+
+    Complete-LoopCheck -Status "ACTION" -Event "external_pr_found" -Data ([ordered]@{
+      repo = $Repo
+      issueRepo = $Repo
+      issue = $Issue
+      issueUrl = Get-LoopProperty $issueView "url"
+      issueLookupError = $issueLookupError
+      baseBranch = $baseBranchFilter
+      provider = $selected.provider
+      pullRequest = $selected.number
+      prUrl = $selected.url
+      organization = $selected.organization
+      project = $selected.project
+      repository = $selected.repository
+      selectionSource = $selected.source
+      commentUrl = $selected.commentUrl
+      commentAuthor = $selected.commentAuthor
+      candidateCount = $externalCandidates.Count
+      candidates = @($externalCandidates | Select-Object provider, number, organization, project, repository, source, commentUrl, commentAuthor, url)
+    }) -ExitCode 0
+  }
+
+  if ($externalCandidates.Count -gt 1) {
+    Complete-LoopCheck -Status "STOP" -Event "multiple_external_pr_references" -Data ([ordered]@{
+      repo = $Repo
+      issue = $Issue
+      issueUrl = Get-LoopProperty $issueView "url"
+      issueLookupError = $issueLookupError
+      baseBranch = $baseBranchFilter
+      candidateCount = $externalCandidates.Count
+      candidates = @($externalCandidates | Sort-Object @{ Expression = "createdAt"; Descending = $true } | Select-Object provider, number, organization, project, repository, source, commentUrl, commentAuthor, url)
     }) -ExitCode $script:LoopStopExitCode
   }
 

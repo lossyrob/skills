@@ -4,6 +4,14 @@ $script:LoopRetryExitCode = 10
 $script:LoopStopExitCode = 23
 $script:LoopGhToken = $null
 
+function Get-LoopGhCommand {
+  if (-not [string]::IsNullOrWhiteSpace($env:PAW_LOOP_GH_COMMAND)) {
+    return $env:PAW_LOOP_GH_COMMAND
+  }
+
+  return "gh"
+}
+
 function Test-LoopTransientGhError {
   param(
     [AllowNull()]
@@ -43,7 +51,7 @@ function Invoke-GhJson {
 
   for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
     $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $processInfo.FileName = "gh"
+    $processInfo.FileName = Get-LoopGhCommand
     $processInfo.RedirectStandardOutput = $true
     $processInfo.RedirectStandardError = $true
     $processInfo.UseShellExecute = $false
@@ -135,7 +143,7 @@ function Invoke-LoopGhTokenCommand {
   )
 
   $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
-  $processInfo.FileName = "gh"
+  $processInfo.FileName = Get-LoopGhCommand
   $processInfo.RedirectStandardOutput = $true
   $processInfo.RedirectStandardError = $true
   $processInfo.UseShellExecute = $false
