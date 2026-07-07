@@ -76,10 +76,9 @@ Create the run tables (the shared `todos` table is used separately for lifecycle
 ```sql
 CREATE TABLE IF NOT EXISTS run_meta (key TEXT PRIMARY KEY, value TEXT);
 -- run_meta keys: runid, repo, repo_path, telex_backend, base_branch_default, gh_note, created_at
--- telex_backend: the telex backend name EVERY session in this run pins via --backend (e.g. `local`
---   sqlite, or a named Postgres like `pg-rde-telex`). Choose it at triage; never rely on the telex
---   default backend (the user can change the default mid-run and split the run across stores). It is
---   injected into every worker prompt as {{telexBackend}} and used on all orchestrator telex commands.
+-- telex_backend: the single telex store every session in this run shares (e.g. a local sqlite
+--   exchange, or a named backend). Choose it at triage and inject it into every worker prompt as
+--   {{telexBackend}}; backend selection/mechanics live in the telex skill (see telex-protocol.md).
 
 CREATE TABLE IF NOT EXISTS issues (
   issue_number     INTEGER PRIMARY KEY,

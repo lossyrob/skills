@@ -19,31 +19,22 @@ GitHub account: {{ghNote}}
 
 ## Telex setup (do this first)
 
-Read `telex skill` once. Then stand up your station — holder + single-shot `wait`, both **async
-background and session-bound** (Copilot CLI: async, `detach: false` — never `detach: true`). Drive the
-`wait` as a re-armed single-shot at your turn level, never an infinite shell loop.
+**Read `telex skill` and `telex copilot skill` first.** They own all telex mechanics — bind, receive,
+send, disposition, recover, tear down — which change with the binary. This prompt only gives you your
+addresses and the messages to exchange; get the exact syntax from those skills.
 
-**Pin the telex backend.** This run uses backend `{{telexBackend}}`. Pass `--backend "{{telexBackend}}"`
-on **every** telex command and set `$env:TELEX_BACKEND` in every shell — never rely on the default
-backend, or your messages will silently route to a different store than the orchestrator/reviewer use.
-
-```powershell
-$env:TELEX_ADDRESS = "{{implAddress}}"
-$env:TELEX_BACKEND = "{{telexBackend}}"
-telex attach --backend "{{telexBackend}}" --address "{{implAddress}}" `
-  --description "PAW implementer for issue #{{issue}} ({{repo}}) run {{runid}}" `
-  --scope "backlog:{{runid}}" --tags "run:{{runid}},repo:{{repo}},role:implementer,issue:{{issue}}"
-```
-
-**Confirm the holder is live before your first `wait`** — the holder and `wait` are separate processes,
-so arming too early can race into a holder-gone exit. Run `telex status --backend "{{telexBackend}}"
---address "{{implAddress}}"` and proceed only when occupancy shows `occupied=true` (a persistent
-`occupied=false` right after attaching usually means a backend mismatch). When a delivered `wait`
-completes, read/save it first, then re-arm a fresh `wait` as the next step (not bundled with heavy work).
+You are a Copilot CLI session, so telex uses **push delivery**: bind the in-session bridge once (the
+Copilot bind verb from `telex copilot skill`) and messages arrive as **turns** — you do **not** run or
+re-arm a `telex wait` waiter. Bind your own address `{{implAddress}}` with description
+`PAW implementer for issue #{{issue}} ({{repo}}) run {{runid}}`, scope `backlog:{{runid}}`, and tags
+`run:{{runid}},repo:{{repo}},role:implementer,issue:{{issue}}`, then load the bridge as that skill
+directs (provision the bridge, then reload extensions once). All sessions in this run share telex
+backend `{{telexBackend}}` — use it (per the telex skill's backend guidance) so you reach the
+orchestrator and reviewer on the same store.
 
 Your contacts: orchestrator = `{{orchestratorAddress}}`; reviewer present = `{{reviewerPresent}}`,
-reviewer = `{{reviewAddress}}`. After each delivered `wait` (exit 0), save the JSON, immediately re-arm
-a fresh background `wait`, then act, then disposition (`telex handle --backend "{{telexBackend}}" --id <id> --note ...`).
+reviewer = `{{reviewAddress}}`. When a telex message arrives as a turn, act on it, then record its
+disposition **by id** using the ack/handle verbs from `telex copilot skill`.
 
 ## PAW configuration
 
@@ -89,21 +80,16 @@ Never request (or re-request) a review on a red or pending PR. If the PR has no 
 
 **2. Review handshake (only if `{{reviewerPresent}}` == yes).** Replace paw-pr-lifecycle *Review
 Response* polling with telex:
-- **Once the CI gate is green**, tell the reviewer:
-  ```powershell
-  telex send --backend "{{telexBackend}}" --to "{{reviewAddress}}" --kind review-ready --attention next-checkpoint --requires-disposition `
-    --subject "Review ready: PR #<pr>" --body "PR #<pr> is open for issue #{{issue}}; CI green; head <sha>." `
-    --metadata '{"pr":<pr>,"headSha":"<sha>","repo":"{{repo}}","issue":{{issue}}}'
-  ```
-- Wait on telex. On `review-posted` (blocking feedback): read the **actual GitHub review** (the telex
-  message is only the wakeup + pointer), address every comment, validate, push, **wait for the CI gate
-  to go green again**, then:
-  ```powershell
-  telex send --backend "{{telexBackend}}" --to "{{reviewAddress}}" --kind rereview-requested --attention next-checkpoint --requires-disposition `
-    --subject "Re-review requested: PR #<pr>" --body "Addressed review; CI green; head <sha>. <summary>" `
-    --metadata '{"pr":<pr>,"headSha":"<sha>","summary":"<one line>"}'
-  ```
-  Re-arm and keep looping until you receive `review-approved`.
+- **Once the CI gate is green**, send the reviewer (`{{reviewAddress}}`) a `review-ready` message,
+  attention `next-checkpoint`, disposition-required, metadata
+  `{"pr":<pr>,"headSha":"<sha>","repo":"{{repo}}","issue":{{issue}}}`, body a one-line summary
+  ("PR #<pr> open for issue #{{issue}}; CI green; head <sha>.").
+- The reviewer's reply arrives as a telex turn. On `review-posted` (blocking feedback): read the
+  **actual GitHub review** (the telex message is only the wakeup + pointer), address every comment,
+  validate, push, **wait for the CI gate to go green again**, then send the reviewer a
+  `rereview-requested` message, attention `next-checkpoint`, disposition-required, metadata
+  `{"pr":<pr>,"headSha":"<sha>","summary":"<one line>"}`, body a one-line summary. Keep looping until
+  you receive `review-approved`.
 - On `review-approved` (`🐾 PAW Review: +1`): the +1 body almost always carries non-blocking notes.
   **Fetch the GitHub review body and triage every note** (paw-pr-lifecycle "Handling approval": quick
   fix → push; substantive → push + **CI gate** + `rereview-requested` and keep waiting; or acknowledge-and-defer).
@@ -117,15 +103,14 @@ merge-readiness (CI, conflicts, base moves) until stand-down. This is NOT replac
 > **Sentry mechanism on Copilot CLI.** The paw-pr-lifecycle "PR Sentry" assumes the `loop` plugin's
 > detached worker + a `$result.event` shape. If your runtime has no literal loop worker (a Copilot CLI
 > session does not), implement the sentry as a **`manage_schedule` recurring self-prompt** that each
-> tick re-checks `gh pr view <pr> --json mergeStateStatus,mergeable,reviewDecision` + `gh pr checks`,
-> alongside your telex `wait` for the orchestrator's stand-down. Either mechanism satisfies the
-> contract: keep watching merge-readiness until stand-down; repair CI/conflicts; do not merge.
+> tick re-checks `gh pr view <pr> --json mergeStateStatus,mergeable,reviewDecision` + `gh pr checks`;
+> the orchestrator's stand-down arrives separately as a telex turn via your bridge. Either mechanism
+> satisfies the contract: keep watching merge-readiness until stand-down; repair CI/conflicts; do not merge.
 
-> **Holder can die during long steady-state waits.** Your session-bound telex holder may exit (e.g.
-> exit 1) during the long sentry phase; your armed `wait` surfaces this as **holder-gone (exit 3/4)**.
-> This is expected and recoverable — restart the holder (`telex attach --backend "{{telexBackend}}"
-> ...`) and re-arm; the durable backend means **no messages are lost**. Re-check `telex status --backend
-> "{{telexBackend}}" --address "{{implAddress}}"` occupancy when you enter the sentry phase.
+> **Keep the bridge live across the long sentry phase.** If your Copilot session is resumed (or the
+> bridge files/heartbeat go missing), re-provision the push bridge and reload extensions per
+> `telex copilot skill` (its resume verb) so queued messages are re-delivered — no messages are lost
+> on the shared store.
 >
 > **Single-owner repo:** if reviewer == repo owner == PR author, the reviewer's +1 posts as a
 > **COMMENTED** review and `reviewDecision` stays **empty** — that is expected. Your ready signal is
@@ -138,16 +123,13 @@ merge-readiness (CI, conflicts, base moves) until stand-down. This is NOT replac
   your field report** (see below) as a comment on issue #{{issue}} — it is an input to the orchestrator's
   merge gate and the builder's review, so it must exist *before* you signal ready. Capture its URL. Then
   tell the orchestrator and **keep the sentry alive** (do not stop it, do not merge — the orchestrator
-  decides):
-  ```powershell
-  telex send --backend "{{telexBackend}}" --to "{{orchestratorAddress}}" --kind merge-ready --attention interrupt --requires-disposition `
-    --subject "Ready for merge: PR #<pr> (issue #{{issue}})" `
-    --body "PR #<pr> is merge-ready. Reviewer: {{reviewerPresent}}. Head <sha>. Field report: <url>." `
-    --metadata '{"pr":<pr>,"headSha":"<sha>","issue":{{issue}},"fieldReportUrl":"<url>"}'
-  ```
+  decides): send the orchestrator (`{{orchestratorAddress}}`) a `merge-ready` message, attention
+  `interrupt`, disposition-required, metadata
+  `{"pr":<pr>,"headSha":"<sha>","issue":{{issue}},"fieldReportUrl":"<url>"}`, body a one-line summary
+  ("PR #<pr> merge-ready. Reviewer: {{reviewerPresent}}. Head <sha>. Field report: <url>.").
 
-**4. Resolve (your terminus depends on the orchestrator's call).** Keep the sentry + a telex `wait`
-armed. You will receive one of:
+**4. Resolve (your terminus depends on the orchestrator's call).** Keep the sentry running; the
+orchestrator's call arrives as a telex turn. You will receive one of:
 
 - **`stand-down-merged`** — the orchestrator merged (auto), or the builder merged after a human-review
   hold. Stop the sentry worker (by its manifest/status PID), post a brief field-report **addendum** on
@@ -159,13 +141,10 @@ armed. You will receive one of:
   auto-merge. Do **not** end. **Keep your merge sentry running** and hold the PR mergeable — repair CI
   failures and rebase/resolve merge conflicts as the base moves — until the **builder merges the PR**.
   Watch for the merge in your sentry (`gh pr view <pr> --json state,mergedAt`; `state == "MERGED"`). When
-  you detect it, tell the orchestrator and wait for its stand-down:
-  ```powershell
-  telex send --backend "{{telexBackend}}" --to "{{orchestratorAddress}}" --kind merged --attention interrupt --requires-disposition `
-    --subject "Merged by human: PR #<pr> (issue #{{issue}})" `
-    --body "Builder merged PR #<pr>. Held it mergeable through <n> base move(s)/repair(s) since review. Awaiting stand-down." `
-    --metadata '{"pr":<pr>,"mergeCommit":"<sha-or-null>","issue":{{issue}}}'
-  ```
+  you detect it, send the orchestrator a `merged` message, attention `interrupt`, disposition-required,
+  metadata `{"pr":<pr>,"mergeCommit":"<sha-or-null>","issue":{{issue}}}`, body a one-line summary
+  ("Builder merged PR #<pr>; held it mergeable through <n> base move(s)/repair(s) since review;
+  awaiting stand-down."), then wait for its stand-down (arrives as a telex turn).
   If a conflict/CI repair during the hold is **substantive** and a reviewer exists, send
   `rereview-requested` and loop back to step 2 before re-settling. Stay in this hold until
   `stand-down-merged` (after your `merged`) or, if the builder abandons the PR, `stand-down-human`.
@@ -177,13 +156,10 @@ armed. You will receive one of:
 ## Blockers
 
 If you hit a hard blocker (issue needs amendment, repeated failure on the same problem, an outcome you
-cannot reach), do not stall silently:
-```powershell
-telex send --backend "{{telexBackend}}" --to "{{orchestratorAddress}}" --kind blocked --attention interrupt --requires-disposition `
-  --subject "Blocked: issue #{{issue}}" --body "<what is blocked and why; suggested amendment if any>" `
-  --metadata '{"issue":{{issue}},"pr":<pr-or-null>}'
-```
-Then wait for the orchestrator's reply/stand-down. If the issue needs amendments, propose them in the
+cannot reach), do not stall silently: send the orchestrator a `blocked` message, attention `interrupt`,
+disposition-required, metadata `{"issue":{{issue}},"pr":<pr-or-null>}`, body describing what is blocked
+and why (with a suggested amendment if any). Then wait for the orchestrator's reply/stand-down (arrives
+as a telex turn). If the issue needs amendments, propose them in the
 message rather than inventing scope.
 
 ## Authority & scope
@@ -213,10 +189,7 @@ stand-down only if something changed afterward (e.g. conflict/CI repairs during 
 ## Process feedback (telex to the orchestrator at finish)
 
 Separately from the field report (which is about the code work), send the orchestrator a short telex
-about THIS process/skill so it can improve the workflow:
-```powershell
-telex send --backend "{{telexBackend}}" --to "{{orchestratorAddress}}" --kind process-feedback --attention background `
-  --subject "Process feedback: issue #{{issue}} (implementer)" `
-  --body "<friction with the telex instructions / prompt / config; what was confusing or slowed you; what worked; concrete suggested edits to the orchestrator skill>"
-```
-Focus on workflow mechanics (telex setup, the handshake, prompt clarity, config), not the code.
+about THIS process/skill so it can improve the workflow: a `process-feedback` message, attention
+`background` (not disposition-required), body covering friction with the telex instructions / prompt /
+config, what was confusing or slowed you, what worked, and concrete suggested edits to the orchestrator
+skill. Focus on workflow mechanics (telex setup, the handshake, prompt clarity, config), not the code.
