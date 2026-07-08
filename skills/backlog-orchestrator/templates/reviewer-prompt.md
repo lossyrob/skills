@@ -26,31 +26,22 @@ GitHub account: {{ghNote}}
 
 ## Telex setup (do this first)
 
-Read `telex skill` once. Stand up your station — holder + single-shot `wait`, both **async background
-and session-bound** (Copilot CLI: async, `detach: false`). Re-arm the `wait` at your turn level, never
-an infinite shell loop.
+**Read `telex skill` and `telex copilot skill` first.** They own all telex mechanics — bind, receive,
+send, disposition, recover, tear down — which change with the binary. This prompt only gives you your
+addresses and the messages to exchange; get the exact syntax from those skills.
 
-**Pin the telex backend.** This run uses backend `{{telexBackend}}`. Pass `--backend "{{telexBackend}}"`
-on **every** telex command and set `$env:TELEX_BACKEND` in every shell — never rely on the default
-backend, or your messages will silently route to a different store than the implementer/orchestrator use.
+You are a Copilot CLI session, so telex uses **push delivery**: bind the in-session bridge once (the
+Copilot bind verb from `telex copilot skill`) and messages arrive as **turns** — you do **not** run or
+re-arm a `telex wait` waiter. Bind your own address `{{reviewAddress}}` with description
+`PAW reviewer for issue #{{issue}} ({{repo}}) run {{runid}}`, scope `backlog:{{runid}}`, and tags
+`run:{{runid}},repo:{{repo}},role:reviewer,issue:{{issue}}`, then load the bridge as that skill directs
+(provision the bridge, then reload extensions once). All sessions in this run share telex backend
+`{{telexBackend}}` — use it (per the telex skill's backend guidance) so you reach the implementer and
+orchestrator on the same store.
 
-```powershell
-$env:TELEX_ADDRESS = "{{reviewAddress}}"
-$env:TELEX_BACKEND = "{{telexBackend}}"
-telex attach --backend "{{telexBackend}}" --address "{{reviewAddress}}" `
-  --description "PAW reviewer for issue #{{issue}} ({{repo}}) run {{runid}}" `
-  --scope "backlog:{{runid}}" --tags "run:{{runid}},repo:{{repo}},role:reviewer,issue:{{issue}}"
-```
-
-**Confirm the holder is live before your first `wait`** — the holder and `wait` are separate processes,
-so arming too early can race into a holder-gone exit. Run `telex status --backend "{{telexBackend}}"
---address "{{reviewAddress}}"` and proceed only when occupancy shows `occupied=true` (a persistent
-`occupied=false` right after attaching usually means a backend mismatch). When a delivered `wait`
-completes, read/save it first, then re-arm a fresh `wait` as the next step (not bundled with heavy work).
-
-Contacts: implementer = `{{implAddress}}`; orchestrator = `{{orchestratorAddress}}`. After each
-delivered `wait`, save the JSON, re-arm a fresh background `wait`, then act, then disposition
-(`telex handle --backend "{{telexBackend}}" --id <id> --note ...`).
+Contacts: implementer = `{{implAddress}}`; orchestrator = `{{orchestratorAddress}}`. When a telex
+message arrives as a turn, act on it, then record its disposition **by id** using the ack/handle verbs
+from `telex copilot skill`.
 
 ## Review configuration
 
@@ -69,9 +60,9 @@ CI-green diff does not need maximal perspectives).
 
 ## Lifecycle — fully telex-driven (no discovery/follow-up loops)
 
-**1. Wait for the PR.** Arm a telex `wait`. On `review-ready`, read the `pr` from the message metadata.
-(If you are launched before the implementer opens the PR, the message simply arrives later — telex
-buffers it; just keep the `wait` armed.)
+**1. Wait for the PR.** The implementer's `review-ready` arrives as a telex turn; read the `pr` from
+its metadata. (If you are launched before the implementer opens the PR, the message simply arrives
+later — telex buffers it and delivers it when it lands.)
 
 **2. Review.** First **sync the base** so your diff is accurate: `git fetch origin <base>` and review
 against `origin/<base>` (or the PR merge-base) — e.g. `git diff origin/<base>...HEAD`. A stale local
@@ -137,40 +128,29 @@ returned `line`). On Windows/PowerShell, parsing `gh api` JSON with `jq` + escap
 pipe the JSON to `python -c` (or PowerShell `ConvertFrom-Json`) instead. Body carries the verdict + marker +
 unanchorable findings; `comments[]` carries line-tied findings.
 
-**3. Tell the implementer the result over telex.**
-- Approved (+1):
-  ```powershell
-  telex send --backend "{{telexBackend}}" --to "{{implAddress}}" --kind review-approved --attention next-checkpoint --requires-disposition `
-    --subject "Review +1: PR #<pr>" --body "Posted 🐾 PAW Review: +1 on PR #<pr>. Notes (if any) in the review body." `
-    --metadata '{"pr":<pr>,"headSha":"<sha>"}'
-  ```
-- Blocking feedback:
-  ```powershell
-  telex send --backend "{{telexBackend}}" --to "{{implAddress}}" --kind review-posted --attention next-checkpoint --requires-disposition `
-    --subject "Review posted: PR #<pr>" --body "Submitted a review with blocking feedback on PR #<pr>. See the GitHub review." `
-    --metadata '{"pr":<pr>,"verdict":"changes"}'
-  ```
+**3. Tell the implementer the result over telex.** Send to the implementer (`{{implAddress}}`),
+attention `next-checkpoint`, disposition-required:
+- Approved (+1): a `review-approved` message, metadata `{"pr":<pr>,"headSha":"<sha>"}`, body noting the
+  `🐾 PAW Review: +1` was posted (with any notes in the review body).
+- Blocking feedback: a `review-posted` message, metadata `{"pr":<pr>,"verdict":"changes"}`, body
+  pointing to the submitted GitHub review.
 
-**4. Wait for re-review.** Arm a telex `wait`. On `rereview-requested` (the implementer addressed
-feedback or pushed substantive changes), inspect the new head, re-review as needed, submit a new GitHub
+**4. Wait for re-review.** The implementer's `rereview-requested` arrives as a telex turn (it addressed
+feedback or pushed substantive changes). Inspect the new head, re-review as needed, submit a new GitHub
 review, and send `review-approved` or `review-posted` again. Loop until you approve and the implementer
 stops requesting re-reviews.
 
-**5. Stand down.** Keep a telex `wait` armed until the orchestrator sends `stand-down-merged` or
-`stand-down-human`. **Stand-down may be deferred:** if the issue is routed to human review, the
-orchestrator holds the implementer (and you) until the builder merges — so after you have approved, keep
-your `wait` armed and **keep handling any late `rereview-requested`** (the implementer may push
-conflict/CI repairs during the hold; re-review and re-approve as in step 4). The orchestrator may also
-send `human-review-pending` to you as an explicit "stay armed" signal — acknowledge it and keep waiting.
-**Stand-down is terminal — do NOT re-arm the wait after it.** On stand-down: clean up your review
-worktree and end the session. (You do not post a field report; the implementer owns that.) **Before
-ending, send the orchestrator a `process-feedback` telex** about this process/skill so it can improve the
-workflow:
-```powershell
-telex send --backend "{{telexBackend}}" --to "{{orchestratorAddress}}" --kind process-feedback --attention background `
-  --subject "Process feedback: issue #{{issue}} (reviewer)" `
-  --body "<telex/prompt/config friction; what was confusing or slow; what worked; concrete suggested edits to the skill>"
-```
+**5. Stand down.** Stay available until the orchestrator sends `stand-down-merged` or
+`stand-down-human` (they arrive as telex turns). **Stand-down may be deferred:** if the issue is routed
+to human review, the orchestrator holds the implementer (and you) until the builder merges — so after
+you have approved, **keep handling any late `rereview-requested`** (the implementer may push conflict/CI
+repairs during the hold; re-review and re-approve as in step 4). The orchestrator may also send
+`human-review-pending` to you as an explicit "stay available" signal — acknowledge it and keep waiting.
+**Stand-down is terminal.** On stand-down: clean up your review worktree and end the session. (You do
+not post a field report; the implementer owns that.) **Before ending, send the orchestrator a
+`process-feedback` telex** about this process/skill so it can improve the workflow: a `process-feedback`
+message, attention `background`, body covering telex/prompt/config friction, what was confusing or slow,
+what worked, and concrete suggested edits to the skill.
 
 ## Notes
 

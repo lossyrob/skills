@@ -1,87 +1,65 @@
-# Telex protocol
+# Telex protocol (run-specific contract)
 
-How the orchestrator and worker sessions address each other and exchange messages. Read `telex skill`
-once for the underlying holder/`wait` model; this file is the run-specific contract on top of it.
+This file defines **only** the run-specific coordination contract for a backlog run: the addresses
+sessions use, how they are scoped/tagged, and the message vocabulary they exchange.
 
-## Backend, run id, scope, tags
+**Telex mechanics are owned by the telex skill, not this file.** How to bind, receive, send, reply,
+disposition, recover, and tear down changes with the telex binary and is documented by the installed
+telex — so do not repeat it here. Every session in a run (orchestrator, implementer, reviewer) is a
+**Copilot CLI session**, so each one loads the telex skill and follows the version-matched Copilot
+workflow it prints:
 
-- **Backend (`<backend>`) — PIN IT ON EVERY COMMAND.** Pick the run's telex backend at start (e.g.
-  `local` sqlite at `~/.telex/local.db`, or a named Postgres like `pg-rde-telex`) and pass
-  `--backend <backend>` on **every** telex command — `attach`, `wait`, `status`, `inbox`, `send`,
-  `reply`, `handle`, `address …`. Also set `$env:TELEX_BACKEND = "<backend>"` in every shell that runs
-  telex. **Never rely on the default backend:** the user can change the default mid-run (e.g. to a
-  Postgres backend), which silently routes the orchestrator's and workers' messages to a different store
-  than their holders/waiters listen on — the address looks unoccupied, sends queue into the void, and
-  waiters never wake. (This exact mismatch bit a real run.) All sessions in a run (orchestrator +
-  workers) MUST share the same `<backend>`; capture it in the run manifest and inject it into every
-  worker prompt.
-- **Run id (`<runid>`):** a short slug you choose at run start, e.g. `rb-2026-06-17a`. It namespaces
-  every address and tag so multiple backlog runs (and other people's telex traffic on the same store)
-  never collide. The store is shared — **always scope your `address list` / `resolve` queries by this
-  run** or you will see unrelated sessions.
+```sh
+telex skill            # underlying model + generic commands
+telex copilot skill    # the Copilot push-delivery workflow (source of truth for our sessions)
+```
+
+Key consequence for this skill: on Copilot CLI, telex uses **push delivery** — you bind the in-session
+bridge once and messages arrive as **turns**. You do **not** stand up a holder, run `telex wait`, or
+re-arm a waiter (those are the generic/fallback path). Follow `telex copilot skill` for the exact
+bind / receive / ack / send / detach syntax; this file assumes that workflow and layers the run
+contract on top of it.
+
+## Backend / shared store
+
+All sessions in a run must reach each other, so they must share **one** telex store. Pick the run's
+telex backend once at start (a local sqlite exchange is a fine default), capture it in the run
+manifest, and inject the same value into every worker prompt. If you select a non-default backend,
+apply it consistently across all sessions per the telex skill's backend guidance — do not let some
+sessions fall back to a different default. Beyond "one shared store for the whole run", backend
+selection and any pinning mechanics belong to the telex skill, not here.
+
+## Run id, scope, tags
+
+- **Run id (`<runid>`):** a short slug chosen at run start, e.g. `rb-2026-06-17a`. It namespaces every
+  address and tag so multiple backlog runs (and unrelated telex traffic on a shared store) never
+  collide. Always scope directory queries by this run so you do not see unrelated sessions.
 - **Scope:** `backlog:<runid>` on every attach.
 - **Tags:** `run:<runid>`, `repo:<owner/repo>`, `role:orchestrator|implementer|reviewer`,
   `issue:<n>` (workers only).
 
 ## Address scheme
 
-| Session | Address | Description (for the directory) |
+Each session binds **its own** address (so every message it sends is repliable) and knows the
+addresses of the peers it talks to.
+
+| Session | Address | Directory description |
 |---|---|---|
 | Orchestrator | `orchestrator:<runid>` | `backlog orchestrator station for <owner/repo> run <runid>` |
 | Implementer (issue n) | `impl:<runid>:issue-<n>` | `PAW implementer for issue #<n> (<owner/repo>) run <runid>` |
 | Reviewer (issue n) | `review:<runid>:issue-<n>` | `PAW reviewer for issue #<n> (<owner/repo>) run <runid>` |
 
-Each session exports `TELEX_ADDRESS` to **its own** address so every `send`/`reply` is repliable.
-
-## Orchestrator station setup (phase 1)
-
-Run the holder and each `wait` as **async background** shells that are **session-bound** (in Copilot
-CLI terms: async with `detach: false` — never `detach: true`). The holder is long-lived but must die
-with your session; a persistent holder would keep answering liveness for a dead session.
-
-```powershell
-$env:TELEX_ADDRESS = "orchestrator:<runid>"
-$env:TELEX_BACKEND = "<backend>"
-telex attach --backend "<backend>" --address "orchestrator:<runid>" `
-  --description "backlog orchestrator station for <owner/repo> run <runid>" `
-  --scope "backlog:<runid>" --tags "run:<runid>,repo:<owner/repo>,role:orchestrator"
-```
-
-**Startup barrier — confirm the holder is live before the first `wait`.** The holder and each `wait`
-are separate processes; arming a `wait` before the holder is listening can race into a holder-gone exit.
-After starting the holder, confirm it is occupied first: `telex status --backend "<backend>" --address
-"orchestrator:<runid>"` (or `telex address show --backend "<backend>" ...`) — proceed only when
-occupancy shows `occupied=true`. A persistent `occupied=false` for a holder you just started is the
-signature of a **backend mismatch** (you queried a different `<backend>` than the holder attached to).
-
-Then drive the **re-arm loop** at your turn level (not a shell `while` loop):
-
-1. Start one async background `telex wait --backend "<backend>" --address "orchestrator:<runid>"`.
-2. When that command **completes**, you are notified. Read its output and exit code:
-   - exit 0 → a message was delivered (JSON on stdout). **Read and save it first; then start a fresh
-     background `wait` as the next step** — do not bundle the re-arm into the same batch as heavy work
-     (if that batch is interrupted you can lose the re-arm); then act on the saved message.
-   - exit 3/4 → holder gone/hung → re-run `telex attach --backend "<backend>" ...`, then re-arm.
-3. Disposition the message after acting (`telex handle --backend "<backend>" --id <id> --note "..."`).
-
-Never wrap `telex wait` in an infinite shell loop — its **completion** is your wake signal, so one
-single-shot wait per delivery, re-armed each turn.
-
-> During phase 3 you are usually waiting on exactly one worker (sequential run), so a single armed
-> `wait` is enough. If both an implementer and a reviewer might message you, one armed `wait` still
-> suffices — telex buffers the second message and the next `wait` delivers it.
-
-**Missed-wait recovery.** If a `wait` was interrupted or you suspect a delivery slipped by, do not assume
-nothing arrived: check `telex inbox --backend "<backend>" --address "orchestrator:<runid>"` for queued
-actionable messages, process them, then re-arm. A missing waiter is a transport gap, not proof of no
-message. (If the inbox unexpectedly looks empty, re-check that you are on the run's `<backend>` — a
-wrong-backend query returns an empty/foreign inbox.)
+Bind, scope, and tag each address using the Copilot bind verb from `telex copilot skill` (it also
+provisions the push bridge). After binding, the orchestrator receives worker messages as turns; there
+is no waiter to arm and no occupancy barrier to clear.
 
 ## Message vocabulary
 
-All cross-session coordination uses these kinds. Put structured fields in `--metadata` (JSON) and a
-human-readable summary in `--body`. Mark anything that needs the recipient to act with
-`--requires-disposition` and an appropriate `--attention`.
+All cross-session coordination uses the message **kinds** below. This is the semantic contract; the
+telex flags that carry it (kind, attention, disposition-required, structured metadata, body) come from
+the telex skill / `telex send --help`. Put the structured fields in the message metadata and a
+human-readable summary in the body, and mark anything the recipient must act on as
+disposition-required with an appropriate attention level.
 
 | kind | direction | attention | meaning / required metadata |
 |---|---|---|---|
@@ -92,36 +70,35 @@ human-readable summary in `--body`. Mark anything that needs the recipient to ac
 | `merge-ready` | impl → orchestrator | `interrupt` | Reviewer approved (if a reviewer exists) **and** merge sentry reports ready. The implementer has **already posted its field report** on the issue (so the gate and the builder can read it). `{pr, headSha, fieldReportUrl}` |
 | `blocked` | impl → orchestrator | `interrupt` | Hard blocker needing an orchestrator/human decision (issue amendment, repeated failure). `{pr?, reason}` |
 | `process-feedback` | impl/review → orchestrator | `background` | At finish/stand-down: feedback on the **process/skill itself** (telex instructions, prompt, config friction; what worked; concrete suggested edits). Not disposition-required. |
-| `human-review-pending` | orchestrator → impl, review | `interrupt` | Routed to human review; the orchestrator will **not** auto-merge. The implementer **keeps its sentry alive** (maintain merge-readiness, repair CI/conflicts) and **does not end**, until the human merges; the reviewer **stays armed** (it may get a late `rereview-requested`). `{pr, reason}` |
+| `human-review-pending` | orchestrator → impl, review | `interrupt` | Routed to human review; the orchestrator will **not** auto-merge. The implementer **keeps its sentry alive** (maintain merge-readiness, repair CI/conflicts) and **does not end**, until the human merges; the reviewer **stays available** (it may get a late `rereview-requested`). `{pr, reason}` |
 | `merged` | impl → orchestrator | `interrupt` | A PR the implementer was holding under `human-review-pending` has been **merged by the human**; the implementer requests stand-down. `{pr, mergeCommit?}` |
-| `stand-down-merged` | orchestrator → impl, review | `interrupt` | The PR is merged (auto-merge, or human-merge after `human-review-pending`). Stop sentries/waits, post a brief field-report **addendum** if anything changed since merge-ready, clean up, end. `{pr}` |
+| `stand-down-merged` | orchestrator → impl, review | `interrupt` | The PR is merged (auto-merge, or human-merge after `human-review-pending`). Stop the sentry, post a brief field-report **addendum** if anything changed since merge-ready, clean up, end. `{pr}` |
 | `stand-down-human` | orchestrator → impl, review | `interrupt` | Terminal stop **without** a pending merge — the issue is being abandoned / the PR closed / a blocker accepted, so there is nothing more to hold for. Stop, post a field-report addendum, clean up, end. `{pr?, reason}` |
 
 Notes:
-- Workers `send` with their own `TELEX_ADDRESS` as `from`, so your `reply` routes back automatically.
-- Prefer `telex reply --backend "<backend>" --to-message <id>` to keep threads; the implementer's
-  `merge-ready` thread is the natural place for your `human-review-pending` / `stand-down-*` reply.
+- Each session sends from its own bound address, so a reply routes back automatically. Prefer replying
+  in-thread to keep a conversation together (the implementer's `merge-ready` thread is the natural
+  place for your `human-review-pending` / `stand-down-*` reply).
 - **Human-review handoff is deferred, not immediate.** When the gate routes an issue to human, you send
   `human-review-pending` (not a stand-down) and **advance** to the next issue; the implementer keeps its
-  sentry alive so the PR stays mergeable while it waits for the builder. Your station's armed `wait` will
-  later receive a `merged` from that implementer (whenever the builder merges) — only then do you send
-  `stand-down-merged`. So a single armed `wait` may interleave the current issue's `merge-ready`/`blocked`
-  with a past human-pended issue's `merged`; key off `from`/metadata to tell them apart.
+  sentry alive so the PR stays mergeable while it waits for the builder. You will later receive a
+  `merged` from that implementer (whenever the builder merges) — only then do you send
+  `stand-down-merged`. So the current issue's `merge-ready`/`blocked` may interleave with a past
+  human-pended issue's `merged`; key off the sender / metadata to tell them apart.
 - The marker contract (`🐾 PAW Review: +1`, etc.) still appears in the **GitHub** review/PR bodies for
-  audit; telex carries the wakeup. Workers should not rely on polling those markers anymore.
+  audit; telex only carries the wakeup + pointer. Workers should not poll those markers.
 
 ## Injecting addresses into workers
 
 Worker launch prompts (generated from the templates) must embed: the worker's own address, the
-orchestrator address, the run id + scope + tags, the issue number, repo, and tier config. The worker
-stands up **its own** holder + re-arm loop against its own address exactly as above. See
-[lifecycle.md](lifecycle.md) for how the orchestrator fills and launches them.
+orchestrator address, the run id + scope + tags, the issue number, repo, tier config, and the run's
+telex backend. The worker binds **its own** address and provisions its push bridge exactly as above,
+following `telex copilot skill`. See [lifecycle.md](lifecycle.md) for how the orchestrator fills and
+launches them.
 
 ## Cleanup
 
-At end of run, retire the run's addresses so they drop from listings:
-
-```powershell
-telex address list --backend "<backend>" --scope "backlog:<runid>" --all
-telex address retire --backend "<backend>" --address "<addr>"   # for each run address
-```
+At end of run, tear down each session's telex binding using the detach verb from `telex copilot skill`,
+and retire the run's addresses so they drop from directory listings (see `telex address --help`). The
+mechanics live in the telex skill; the only run-specific part is that every `orchestrator:<runid>` /
+`impl:<runid>:*` / `review:<runid>:*` address should be retired.

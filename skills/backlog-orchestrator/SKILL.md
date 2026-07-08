@@ -36,7 +36,7 @@ you `merged`, and only then do you stand it down. Either way, you advance to the
 
 | Phase | What you do | Reference |
 |---|---|---|
-| 1. Station setup | Stand up your telex station (holder + re-armed `wait`). | [references/telex-protocol.md](references/telex-protocol.md) |
+| 1. Station setup | Bind your telex station via the Copilot push bridge (per `telex copilot skill`). | [references/telex-protocol.md](references/telex-protocol.md) |
 | 2. Triage | With the user: select issues, size S/M/L, set per-tier + per-issue config (impl PAW config, reviewer on/off + PAW Review config, **merge disposition**, **care knob**, **posture**). | [references/triage.md](references/triage.md) |
 | 3. Per-issue execution | Sequentially launch implementer (+ optional reviewer), coordinate over telex until "ready for merge" or "blocked". | [references/lifecycle.md](references/lifecycle.md) |
 | 4. Merge gate + advance | Run the last-line review, decide merge vs human, merge, stand down workers, advance. | [references/merge-gate.md](references/merge-gate.md) |
@@ -48,12 +48,11 @@ Worker launch prompts are generated from bundled, parameterized templates:
 
 ## Prerequisites (verify before starting)
 
-- `telex` on PATH (`telex skill` for the messaging model). **Pick one telex `<backend>` for the whole
-  run and pin it** with `--backend <backend>` on every telex command (orchestrator + workers); capture
-  it in the run manifest. `local` sqlite (`~/.telex/local.db`) is a fine default, but **never rely on
-  the telex default backend** — if the user changes the default mid-run (e.g. to a Postgres backend),
-  unqualified commands route to the wrong store, holders look unoccupied, and waiters never wake. This
-  is a real failure mode; see [references/telex-protocol.md](references/telex-protocol.md).
+- `telex` on PATH. Read `telex skill` and `telex copilot skill` for the messaging model and the
+  Copilot push-bridge workflow — all telex mechanics live there, not in this skill. Pick **one** telex
+  store for the whole run (a local sqlite exchange is a fine default) so the orchestrator and all
+  workers reach each other; capture it in the run manifest and inject it into every worker prompt. See
+  [references/telex-protocol.md](references/telex-protocol.md) for the run-specific contract.
 - `launch-copilot-terminal` skill installed (resolve its actual installed path; do not assume
   `~/.copilot/skills`). Workers are Copilot CLI tabs launched with `--allow-all` for autonomy. The
   reviewer is additionally launched with `--agent PAW-Review`, so the **`PAW-Review` custom agent must be

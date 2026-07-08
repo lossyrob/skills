@@ -35,8 +35,8 @@ For the current issue `#n` with its manifest row:
    Write prompt files as UTF-8 (`Set-Content -Encoding utf8` or Python `Path.write_text(...,
    encoding="utf-8")`) to avoid mojibake in the launched session.
 
-3. **Launch reviewer first (if enabled), then implementer.** telex buffers messages to not-yet-attached
-   addresses (`queued-unoccupied`), so order is not strictly racey, but launching the reviewer first
+3. **Launch reviewer first (if enabled), then implementer.** telex buffers messages to addresses that
+   are not yet bound, so order is not strictly racey, but launching the reviewer first
    means it is already waiting when `review-ready` arrives.
 
    ```powershell
@@ -55,8 +55,8 @@ For the current issue `#n` with its manifest row:
    whereas the `PAW` agent runs the full spec→…→pr workflow; paw-lite is loaded via the prompt instead.
    Append `"--model",<model>` to either when the issue config pins a session model.
 
-4. **Wait for this issue's terminal message** on your station (`merge-ready` or `blocked`). You already
-      have a `telex wait` armed (telex-protocol.md). A `merged` from a **past** human-pended issue may also
+4. **Wait for this issue's terminal message** on your station (`merge-ready` or `blocked`). It arrives
+      as a telex turn via your push bridge (telex-protocol.md). A `merged` from a **past** human-pended issue may also
       arrive here (handle it per step 5, then resume waiting on the current issue). Non-terminal messages
       (`status`, `process-feedback`) are not actionable — log them to the ledger and keep waiting.
       Disposition/ignore any stray messages not from this run's workers.
@@ -70,13 +70,13 @@ For the current issue `#n` with its manifest row:
        ```powershell
        gh pr merge <pr> --repo <repo> --squash --delete-branch
        ```
-       Reply in the `merge-ready` thread (`telex reply --backend "<backend>" --to-message <id> ...`)
-       with `stand-down-merged` (metadata `{pr}`), and also `telex send --backend "<backend>"`
-       `stand-down-merged` to `review:<runid>:issue-<n>` if a reviewer exists.
+       Reply in the `merge-ready` thread with a `stand-down-merged` message (metadata `{pr}`), and also
+       send `stand-down-merged` to `review:<runid>:issue-<n>` if a reviewer exists (send/reply syntax
+       per the telex skill).
        `UPDATE issues SET status='merged', pr_number=<pr> ...`.
      - `human-review` → do **not** merge, and do **not** stand the workers down yet. Reply
        `human-review-pending` (metadata `{pr, reason}`) so the implementer **keeps its sentry alive** and
-       holds the PR mergeable until the builder merges; send the same to the reviewer so it stays armed.
+       holds the PR mergeable until the builder merges; send the same to the reviewer so it stays available.
        `UPDATE issues SET status='human-review', pr_number=<pr> ...`. Record the reason and the subagent's
        well-lit bet in the ledger ([reporting.md](reporting.md)). Then **advance** (step 7) — the held
        implementer will message you `merged` later, out of band.
@@ -97,7 +97,7 @@ For the current issue `#n` with its manifest row:
      `stand-down-human` (terminal stop — the issue is not proceeding to a merge), and advance. Only pause
      the whole run if the user tells you to.
 
-6. **Disposition** the worker message (`telex handle --backend "<backend>" --id <id> --note "<terminal outcome>"`).
+6. **Disposition** the worker message (record its terminal disposition by id, per the telex skill).
 
 7. **Advance.** Mark the issue's lifecycle `todo` `done`. Move to the next `pending` issue by
    `position`. When no issues remain, **gate run-completion on deferred work**: the run is not complete
@@ -108,8 +108,8 @@ For the current issue `#n` with its manifest row:
 ## Stand-down is the worker's true terminus (and it is deferred for human review)
 
 Workers do not end at PR creation or at `merge-ready`. The implementer posts its **field report at
-merge-ready** (so the gate and the builder can read it), then keeps its merge sentry / re-review waits
-alive until it receives a `stand-down-*` from you.
+merge-ready** (so the gate and the builder can read it), then keeps its merge sentry alive (and stays
+available for re-review) until it receives a `stand-down-*` from you.
 
 - **Auto-merge:** you merge, then send `stand-down-merged` immediately.
 - **Human review:** you send `human-review-pending` (not a stand-down). The implementer keeps its sentry
@@ -122,11 +122,12 @@ On stand-down the worker posts a brief field-report **addendum** if anything cha
 (e.g. post-routing conflict repairs), cleans up its worktree, and ends. Always send a stand-down on every
 terminal branch — a sentry left without one will poll indefinitely. Because human-review stand-down is
 deferred, several past implementers may be idling in sentry mode while you run later issues; that is
-expected (their idle holders survive, and the durable backend loses no `merged` message).
+expected (their push bridges stay live, and the shared store loses no `merged` message).
 
 ## Crash / silence (v1 posture)
 
 No active liveness monitoring in v1. If you suspect a worker died (no message for a long time), you may
-manually inspect `telex address list --backend "<backend>" --scope "backlog:<runid>"` (liveness grade) and the PR state via
+manually inspect the run's telex address directory (scope `backlog:<runid>`, liveness grade — see the
+telex skill for the directory command) and the PR state via
 `gh`, then decide with the user whether to relaunch or mark the issue blocked. Do not build this into
 the autonomous loop for v1.
