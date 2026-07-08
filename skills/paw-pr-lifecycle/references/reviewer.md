@@ -26,8 +26,10 @@ If the issue has base-branch guidance, include `-BaseBranch <base-branch>` in th
 |---|---|
 | `classification` is `crashed` or `stalled` | Inspect with `$loopStatus`, report the worker fault/staleness, and restart this mode only after confirming the prior worker is not alive or has been intentionally stopped by manifest/status PID. |
 | `pr_found` | Use the emitted `pullRequest` value and review that PR. |
+| `external_pr_found` | Use the emitted `provider`, `prUrl`, and `pullRequest` values to review the externally linked PR. |
 | `weak_pr_references_only`, `no_pr_found` | Keep waiting. |
 | `multiple_closing_pr_references`, `multiple_pr_candidates` | Inspect candidates; fix the canonical script if the detection logic is wrong. |
+| `multiple_external_pr_references` | Inspect candidates and select the intended external PR before reviewing. |
 | `script_or_github_api_error` | Fix the canonical script in `scripts\`, then restart discovery. |
 
 ## Review mode
@@ -66,6 +68,22 @@ Watch for addressed reviews, explicit re-review requests, unreviewed head change
 $manifest = & $loopDetached `
   -Name "paw-review-follow-up-<pr-number>" `
   -CheckCommand "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$loopScripts\review-addressed-check.ps1`" -Repo <repo> -PullRequest <pr-number> -GhUser <gh-user>" `
+  -IntervalSeconds 60 `
+  -TimeoutSeconds 43200 `
+  -RetryExitCode 10 `
+  -StopExitCode 23 `
+  -Quiet | ConvertFrom-Json
+
+$result = Receive-LifecycleLoopResult -LoopWait $loopWait -LoopStatus $loopStatus -Manifest $manifest -PollIntervalSeconds 30
+$result
+```
+
+For an Azure DevOps PR discovered through `external_pr_found`, use the Azure DevOps checker with the same loop/waiter wrapper and event contract:
+
+```powershell
+$manifest = & $loopDetached `
+  -Name "paw-review-follow-up-azdo-<pr-number>" `
+  -CheckCommand "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$loopScripts\review-azdo-addressed-check.ps1`" -OrganizationUrl <organization-url> -Project <project> -Repository <repository> -PullRequest <pr-number> -ReviewerUniqueName <reviewer-unique-name> -ReviewedHeadRefOid <reviewed-head-sha>" `
   -IntervalSeconds 60 `
   -TimeoutSeconds 43200 `
   -RetryExitCode 10 `
