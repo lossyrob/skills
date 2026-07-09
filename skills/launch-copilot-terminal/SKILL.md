@@ -1,6 +1,6 @@
 ---
 name: launch-copilot-terminal
-description: Launch a new terminal running Copilot CLI with a requested title, color label, and working directory. Supports macOS iTerm2/Terminal.app and Windows Terminal, prompt-driven sessions, existing-session resume, automatic terminal selection, and new/current window targeting.
+description: Launch a new terminal running Copilot CLI with a requested title, color label, and working directory. Supports macOS iTerm2/Terminal.app and Windows Terminal, prompt-driven sessions, existing-session resume, explicit terminal selection, and new/current window targeting.
 compatibility: "Requires macOS with iTerm2 or Terminal.app and Bash, or Windows with Windows Terminal and PowerShell 5.1+; Copilot CLI must be on PATH."
 ---
 
@@ -10,8 +10,8 @@ Use this skill when the user asks to launch, open, spawn, or start a new Copilot
 
 ## Behavior
 
-- Launches Windows Terminal on Windows. On macOS, `terminal=auto` prefers iTerm2 when installed and
-  falls back to Terminal.app; `terminal=iterm2` and `terminal=terminal` select explicitly. The macOS
+- Launches Windows Terminal on Windows. On macOS, `terminal=auto` uses Terminal.app to avoid surprising
+  iTerm2 Automation prompts; `terminal=iterm2` and `terminal=terminal` select explicitly. The macOS
   helper also accepts `iterm`, `terminal2`, and `terminal.app` aliases.
 - By default the session opens in a separate window; `window=current` opens a tab in the current window.
 - In prompt mode, starts Copilot CLI with `copilot -i <prompt>` so the prompt is submitted into an interactive session.
@@ -37,8 +37,8 @@ Use this skill when the user asks to launch, open, spawn, or start a new Copilot
 - `copilotArgs`: extra Copilot CLI arguments, such as `--model gpt-5.5` or `--allow-all`. On macOS,
   pass each argument with a separate `--copilot-arg`.
 - `copilotCommand`: alternate Copilot command path. Defaults to `copilot`.
-- `terminal` (macOS): `auto` (default), `iterm2`, or `terminal`. Auto prefers iTerm2 and falls back to
-  Terminal.app. Explicit iTerm2 selection fails clearly when it is not installed.
+- `terminal` (macOS): `auto` (default), `iterm2`, or `terminal`. Auto uses Terminal.app. Explicit iTerm2
+  selection fails clearly when it is not installed.
 - `window`: `new` (default) opens a separate terminal window; `current` opens a tab in the current
   window. Terminal.app may request macOS Accessibility permission the first time it creates a
   current-window tab; iTerm2 does not require GUI scripting for this operation.
@@ -63,8 +63,8 @@ skill_dir="/path/to/launch-copilot-terminal"
   --prompt "Implement the requested change and validate it."
 ```
 
-`--terminal auto` selects iTerm2 when available. Use `--terminal terminal` to force Terminal.app or
-`--terminal iterm2` (also `iterm` / `terminal2`) to require iTerm2.
+`--terminal auto` selects Terminal.app. Use `--terminal iterm2` (also `iterm` / `terminal2`) to require
+iTerm2.
 
 For a long prompt and extra Copilot flags:
 
@@ -137,6 +137,11 @@ $skillDir = "C:\path\to\launch-copilot-terminal"
 
 ## Notes
 
+- The first explicit iTerm2 launch may trigger a macOS Automation prompt for
+  **GitHub Copilot.app → iTerm.app**. Choose **Allow** once, or enable it later in **System Settings →
+  Privacy & Security → Automation**. macOS owns this consent prompt; the launcher cannot suppress it.
+  The iTerm2 AppleScript allows up to ten minutes for the one-time decision so worker startup does not
+  fail with `-1712` while the prompt is pending.
 - On Windows, prefer `-Prompt` with a single-quoted here-string for normal multiline prompts.
 - Use `--dry-run` on macOS or `-DryRun` on Windows to inspect the generated launch without opening a terminal.
 - Do not use `copilot -p` for this workflow because it runs non-interactively and exits.

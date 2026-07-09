@@ -71,9 +71,9 @@ customizes a specific issue.
 
 ## Step 4 — Persist the run manifest
 
-On macOS, set the run-level `terminal_app` preference. Default to `auto` so iTerm2 is used when
-installed and Terminal.app remains a zero-configuration fallback; use `iterm2` or `terminal` only when
-the user explicitly chooses one.
+On macOS, set the run-level `terminal_app` preference. Default to `auto` (Terminal.app); use `iterm2`
+or `terminal` only when the user explicitly chooses one. Before locking an iTerm2 run, disclose its
+one-time macOS Automation consent prompt.
 
 Create the run tables (the shared `todos` table is used separately for lifecycle progress):
 
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS run_meta (key TEXT PRIMARY KEY, value TEXT);
 -- telex_backend: the single telex store every session in this run shares (e.g. a local sqlite
 --   exchange, or a named backend). Choose it at triage and inject it into every worker prompt as
 --   {{telexBackend}}; backend selection/mechanics live in the telex skill (see telex-protocol.md).
--- terminal_app: macOS launch preference: auto (prefer iTerm2, fallback Terminal.app), iterm2, or terminal.
+-- terminal_app: macOS launch preference: auto (Terminal.app), iterm2, or terminal.
 
 CREATE TABLE IF NOT EXISTS issues (
   issue_number     INTEGER PRIMARY KEY,

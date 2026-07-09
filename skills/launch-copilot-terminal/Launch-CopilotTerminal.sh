@@ -120,11 +120,7 @@ command -v osascript >/dev/null 2>&1 || die "AppleScript command 'osascript' was
 
 case "$terminal" in
   auto)
-    if /usr/bin/open -Ra iTerm >/dev/null 2>&1 || /usr/bin/open -Ra iTerm2 >/dev/null 2>&1; then
-      selected_terminal=iterm2
-    else
-      selected_terminal=terminal
-    fi
+    selected_terminal=terminal
     ;;
   iterm|iterm2|terminal2)
     if /usr/bin/open -Ra iTerm >/dev/null 2>&1 || /usr/bin/open -Ra iTerm2 >/dev/null 2>&1; then
@@ -238,28 +234,34 @@ if [[ $dry_run == true ]]; then
 fi
 
 if [[ $selected_terminal == iterm2 ]]; then
+  printf '%s\n' \
+    'Launching iTerm2. macOS may request one-time Automation access for GitHub Copilot.app; choose Allow.' >&2
   osascript - "$launch_command" "$display_title" "$window" <<'APPLESCRIPT'
 on run argv
   set launchCommand to item 1 of argv
   set displayTitle to item 2 of argv
   set windowMode to item 3 of argv
 
-  tell application id "com.googlecode.iterm2"
-    activate
-    if windowMode is "current" and (count of windows) > 0 then
-      tell current window
-        create tab with default profile command launchCommand
-        tell current session
-          set name to displayTitle
+  with timeout of 600 seconds
+    tell application id "com.googlecode.iterm2"
+      activate
+      if windowMode is "current" and (count of windows) > 0 then
+        tell current window
+          create tab with default profile
+          tell current session
+            set name to displayTitle
+            write text launchCommand
+          end tell
         end tell
-      end tell
-    else
-      set launchedWindow to (create window with default profile command launchCommand)
-      tell current session of launchedWindow
-        set name to displayTitle
-      end tell
-    end if
-  end tell
+      else
+        set launchedWindow to (create window with default profile)
+        tell current session of launchedWindow
+          set name to displayTitle
+          write text launchCommand
+        end tell
+      end if
+    end tell
+  end timeout
 end run
 APPLESCRIPT
 else

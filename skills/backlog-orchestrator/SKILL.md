@@ -19,7 +19,8 @@ them over telex, gate merges, merge, and report.
 
 Worker sessions run in their own terminal windows/tabs (iTerm2/Terminal.app on macOS or Windows
 Terminal, via `launch-copilot-terminal`) and in their own git worktrees. On macOS, automatic terminal
-selection prefers iTerm2 when installed. The **implementer** runs the PAW workflow
+selection uses Terminal.app; iTerm2 is an explicit run-level choice because its first launch requires
+one-time macOS Automation consent. The **implementer** runs the PAW workflow
 (config `Workflow Identity`, e.g. `paw-lite`,
 loaded as a skill — *not* launched as the `PAW` agent) → opens a PR. If the tier calls for it, a
 **reviewer** — launched **as the `PAW-Review` custom agent** (`--agent PAW-Review`), with its prompt

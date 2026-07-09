@@ -64,9 +64,11 @@ For the current issue `#n` with its manifest row:
      --terminal "<terminal_app>" --prompt-file "<...>/impl-<n>.md" --copilot-arg=--allow-all
    ```
 
-   `--terminal auto` prefers iTerm2 (also known as iTerm/Terminal2) when installed and falls back to
-   Terminal.app. Use the run manifest's `terminal_app` override (`iterm2` or `terminal`) when the user
-   chooses one explicitly.
+   `--terminal auto` uses Terminal.app. Use the run manifest's `terminal_app` override (`iterm2` or
+   `terminal`) when the user chooses one explicitly. Before an iTerm2 run, tell the user that macOS may
+   request one-time **GitHub Copilot.app → iTerm.app** Automation consent; launch one worker at a time
+   until that consent is resolved. Do not fall back and relaunch after an AppleScript timeout without
+   first verifying that iTerm2 did not create a session, or duplicate workers could result.
 
    Windows:
 

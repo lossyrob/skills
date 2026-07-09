@@ -42,7 +42,7 @@ Convene a bounded multi-model, multi-perspective deliberation to produce a recom
 ### launch-copilot-terminal
 
 Launch a new iTerm2, Terminal.app, or Windows Terminal session running Copilot CLI with a requested
-title, color label, and working directory. Supports automatic macOS terminal selection, a prompt-driven
+title, color label, and working directory. Supports explicit macOS terminal selection, a prompt-driven
 interactive session, an existing-session resume, and targeting either a separate window or the current
 terminal window. Useful for starting parallel Copilot sessions, focused worker windows, or opening a
 resumed session beside the current one.
@@ -51,7 +51,8 @@ resumed session beside the current one.
 
 **Features:**
 - Opens iTerm2/Terminal.app on macOS or Windows Terminal on Windows with a chosen title and color identifier
-- macOS `auto` mode prefers iTerm2 (also accepts `iterm`/`terminal2`) and falls back to Terminal.app
+- macOS `auto` mode uses Terminal.app; explicit iTerm2 mode also accepts `iterm`/`terminal2`
+- iTerm2 launches allow time for macOS's one-time GitHub Copilot.app Automation consent
 - Two modes: **prompt mode** starts Copilot with `copilot -i <prompt>`; **resume mode** reattaches to an existing session with `copilot --resume <id-or-name>` (no prompt submitted)
 - New/current window targeting on both platforms; only Terminal.app may request Accessibility permission for current-window tab creation
 - Supports explicit working directories, extra Copilot CLI arguments, and prompt files
