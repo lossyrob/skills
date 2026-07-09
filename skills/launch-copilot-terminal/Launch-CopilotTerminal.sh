@@ -162,11 +162,14 @@ mkdir -p "$launch_root"
 launch_script=$(mktemp "$launch_root/launch.XXXXXX")
 prompt_payload=
 
-cleanup_on_error() {
+cleanup_on_exit() {
+  status=$?
+  trap - EXIT
   rm -f "$launch_script"
   [[ -z $prompt_payload ]] || rm -f "$prompt_payload"
+  exit "$status"
 }
-trap cleanup_on_error EXIT
+trap cleanup_on_exit EXIT
 
 if [[ -n $prompt_file ]]; then
   [[ -f $prompt_file ]] || die "Prompt file '$prompt_file' was not found."
@@ -189,18 +192,18 @@ fi
   printf 'printf "%%s" %s\n' "$(shell_quote $'\033]0;'"[$color] $title"$'\007')"
   printf 'copilot_command=%s\n' "$(shell_quote "$resolved_copilot")"
   printf '%s\n' 'copilot_args=('
-  for arg in "${copilot_args[@]}"; do
+  for arg in "${copilot_args[@]+"${copilot_args[@]}"}"; do
     printf '  %s\n' "$(shell_quote "$arg")"
   done
   printf '%s\n' ')'
 
   if [[ -n $resume ]]; then
-    printf '"$copilot_command" "${copilot_args[@]}" --resume %s\n' "$(shell_quote "$resume")"
+    printf '"$copilot_command" "${copilot_args[@]+"${copilot_args[@]}"}" --resume %s\n' "$(shell_quote "$resume")"
   else
     printf 'prompt_file=%s\n' "$(shell_quote "$prompt_payload")"
     printf '%s\n' 'copilot_prompt=$(<"$prompt_file")'
     printf '%s\n' 'rm -f "$prompt_file"'
-    printf '%s\n' '"$copilot_command" "${copilot_args[@]}" -i "$copilot_prompt"'
+    printf '%s\n' '"$copilot_command" "${copilot_args[@]+"${copilot_args[@]}"}" -i "$copilot_prompt"'
   fi
 
   printf '%s\n' 'status=$?'
@@ -221,7 +224,9 @@ if [[ $dry_run == true ]]; then
   printf 'launchScript: %s\n' "$launch_script"
   printf 'copilotCommand: %s\n' "$resolved_copilot"
   printf 'copilotArgs:'
-  printf ' %q' "${copilot_args[@]}"
+  if [[ ${#copilot_args[@]} -gt 0 ]]; then
+    printf ' %q' "${copilot_args[@]}"
+  fi
   printf '\n'
   if [[ -n $resume ]]; then
     printf 'resume: %s\n' "$resume"
