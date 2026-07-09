@@ -1,7 +1,7 @@
 ---
 name: launch-copilot-terminal
-description: Launch a new Windows Terminal tab running Copilot CLI with a requested title, tab color, and working directory. Supports a prompt-driven interactive session, an existing-session resume, and targeting either a separate window or the current Windows Terminal window.
-compatibility: "Requires Windows, Windows Terminal (wt.exe), PowerShell 5.1+ or PowerShell 7+, and Copilot CLI on PATH."
+description: Launch a new terminal running Copilot CLI with a requested title, color label, and working directory. Supports macOS iTerm2/Terminal.app and Windows Terminal, prompt-driven sessions, existing-session resume, automatic terminal selection, and new/current window targeting.
+compatibility: "Requires macOS with iTerm2 or Terminal.app and Bash, or Windows with Windows Terminal and PowerShell 5.1+; Copilot CLI must be on PATH."
 ---
 
 # Launch Copilot Terminal
@@ -10,17 +10,21 @@ Use this skill when the user asks to launch, open, spawn, or start a new Copilot
 
 ## Behavior
 
-- Launches a new Windows Terminal tab. By default the tab opens in a separate window; pass `-Window current` to open the tab in the current Windows Terminal window instead.
+- Launches Windows Terminal on Windows. On macOS, `terminal=auto` prefers iTerm2 when installed and
+  falls back to Terminal.app; `terminal=iterm2` and `terminal=terminal` select explicitly. The macOS
+  helper also accepts `iterm`, `terminal2`, and `terminal.app` aliases.
+- By default the session opens in a separate window; `window=current` opens a tab in the current window.
 - In prompt mode, starts Copilot CLI with `copilot -i <prompt>` so the prompt is submitted into an interactive session.
 - In resume mode, starts Copilot CLI with `copilot --resume <session>` to reattach to an existing session interactively (no prompt is submitted).
-- Sets the Windows Terminal tab title and tab color.
+- Sets the terminal title. Windows uses a real tab color; macOS includes the requested color as a title
+  label (for example, `[green] Implementation`).
 - Uses an explicitly provided working directory; if none is provided, use the current working directory.
 - Leaves the terminal open after Copilot exits.
 - Supports common color names and `#RRGGBB`/`RRGGBB` hex values.
 
 ## Required inputs
 
-- `title`: the Windows Terminal tab title.
+- `title`: the terminal title.
 - `color`: a natural color name such as `green`, `blue`, or `purple`, or a hex color such as `#00ff00`.
 - Exactly one of:
   - `prompt`: the prompt to submit to Copilot (prompt mode).
@@ -30,15 +34,65 @@ Use this skill when the user asks to launch, open, spawn, or start a new Copilot
 ## Optional inputs
 
 - `cwd`: working directory for the launched session. Defaults to the current working directory.
-- `copilotArgs`: extra Copilot CLI arguments, such as `--model gpt-5.5` or `--allow-all`.
+- `copilotArgs`: extra Copilot CLI arguments, such as `--model gpt-5.5` or `--allow-all`. On macOS,
+  pass each argument with a separate `--copilot-arg`.
 - `copilotCommand`: alternate Copilot command path. Defaults to `copilot`.
-- `window`: `new` (default) opens the tab in a separate Windows Terminal window; `current` opens the tab in the current Windows Terminal window (`wt -w 0`).
+- `terminal` (macOS): `auto` (default), `iterm2`, or `terminal`. Auto prefers iTerm2 and falls back to
+  Terminal.app. Explicit iTerm2 selection fails clearly when it is not installed.
+- `window`: `new` (default) opens a separate terminal window; `current` opens a tab in the current
+  window. Terminal.app may request macOS Accessibility permission the first time it creates a
+  current-window tab; iTerm2 does not require GUI scripting for this operation.
 
 ## How to launch
 
-Use this skill only on Windows. If Windows Terminal or Copilot CLI is unavailable, explain the missing prerequisite instead of attempting a launch.
+Detect the host OS and use the matching bundled helper. Use the actual installed skill path; do not
+assume the skill is installed under `~/.copilot/skills`. If the platform terminal or Copilot CLI is
+unavailable, explain the missing prerequisite instead of attempting a launch.
 
-Run the bundled PowerShell helper from this skill directory. Use the actual installed skill path; do not assume the skill is installed under `$HOME\.copilot\skills`.
+### macOS
+
+Run the bundled Bash helper:
+
+```bash
+skill_dir="/path/to/launch-copilot-terminal"
+"$skill_dir/Launch-CopilotTerminal.sh" \
+  --title "Implementation" \
+  --color green \
+  --cwd "/Users/rob/proj/repo" \
+  --terminal auto \
+  --prompt "Implement the requested change and validate it."
+```
+
+`--terminal auto` selects iTerm2 when available. Use `--terminal terminal` to force Terminal.app or
+`--terminal iterm2` (also `iterm` / `terminal2`) to require iTerm2.
+
+For a long prompt and extra Copilot flags:
+
+```bash
+"$skill_dir/Launch-CopilotTerminal.sh" \
+  --title "Autonomous worker" \
+  --color purple \
+  --cwd "/Users/rob/proj/repo" \
+  --terminal iterm2 \
+  --prompt-file "/path/to/prompt.md" \
+  --copilot-arg=--allow-all \
+  --copilot-arg=--model \
+  --copilot-arg=gpt-5.5
+```
+
+Resume in a tab in the current macOS terminal window:
+
+```bash
+"$skill_dir/Launch-CopilotTerminal.sh" \
+  --title "Branch: my session [a1b2c3d4]" \
+  --color purple \
+  --cwd "/Users/rob/proj/repo" \
+  --terminal auto \
+  --resume "a1b2c3d4-5678-90ab-cdef-1234567890ab" \
+  --window current
+```
+
+### Windows
 
 ```powershell
 $skillDir = "C:\path\to\launch-copilot-terminal"
@@ -83,9 +137,10 @@ $skillDir = "C:\path\to\launch-copilot-terminal"
 
 ## Notes
 
-- Prefer `-Prompt` with a single-quoted here-string for normal multiline prompts.
-- Use `-DryRun` to inspect the generated launch command without opening a terminal.
+- On Windows, prefer `-Prompt` with a single-quoted here-string for normal multiline prompts.
+- Use `--dry-run` on macOS or `-DryRun` on Windows to inspect the generated launch without opening a terminal.
 - Do not use `copilot -p` for this workflow because it runs non-interactively and exits.
 - Quote titles, paths, and prompts explicitly.
 - Resume mode does not submit a prompt; the new tab drops directly into the resumed interactive session.
-- `-Window current` targets the most recently used Windows Terminal window (`wt -w 0`); use it when the caller wants the new tab to land beside the current session.
+- Current-window mode targets the current iTerm2/Terminal.app window on macOS or the most recently used
+  Windows Terminal window (`wt -w 0`) on Windows.

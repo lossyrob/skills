@@ -1,7 +1,7 @@
 ---
 name: backlog-orchestrator
 description: Drive a backlog of GitHub issues to PRs autonomously and sequentially. The loaded session becomes an orchestrator that triages issues into S/M/L tiers, spawns PAW implementer (and optional PAW Review) worker terminals that coordinate over telex instead of GitHub-comment polling, gates each PR through a preference/human-floor merge review, and auto-merges or routes to human review. Use when asked to work through a backlog/queue of issues autonomously, run an autonomous issue-fixing pipeline, or orchestrate PAW sessions across many issues.
-compatibility: "Requires Windows + Windows Terminal (for launch-copilot-terminal), Copilot CLI on PATH, telex on PATH, GitHub CLI authenticated for the target repo, and the installed skills: launch-copilot-terminal, paw-pr-lifecycle, loop, and the PAW workflow skills (paw-lite / paw-review-workflow)."
+compatibility: "Requires macOS with iTerm2 or Terminal.app, or Windows with Windows Terminal, Copilot CLI on PATH, telex on PATH, GitHub CLI authenticated for the target repo, and the installed skills: launch-copilot-terminal, paw-pr-lifecycle, loop, and the PAW workflow skills (paw-lite / paw-review-workflow)."
 ---
 
 # Backlog Orchestrator
@@ -17,8 +17,10 @@ them over telex, gate merges, merge, and report.
 
 ## The model in one paragraph
 
-Worker sessions run in their own Windows Terminal tabs (via `launch-copilot-terminal`) and in their
-own git worktrees. The **implementer** runs the PAW workflow (config `Workflow Identity`, e.g. `paw-lite`,
+Worker sessions run in their own terminal windows/tabs (iTerm2/Terminal.app on macOS or Windows
+Terminal, via `launch-copilot-terminal`) and in their own git worktrees. On macOS, automatic terminal
+selection prefers iTerm2 when installed. The **implementer** runs the PAW workflow
+(config `Workflow Identity`, e.g. `paw-lite`,
 loaded as a skill — *not* launched as the `PAW` agent) → opens a PR. If the tier calls for it, a
 **reviewer** — launched **as the `PAW-Review` custom agent** (`--agent PAW-Review`), with its prompt
 authorizing autonomous review submission — runs the PAW Review workflow → submits a real GitHub PR review.
@@ -53,8 +55,9 @@ Worker launch prompts are generated from bundled, parameterized templates:
   store for the whole run (a local sqlite exchange is a fine default) so the orchestrator and all
   workers reach each other; capture it in the run manifest and inject it into every worker prompt. See
   [references/telex-protocol.md](references/telex-protocol.md) for the run-specific contract.
-- `launch-copilot-terminal` skill installed (resolve its actual installed path; do not assume
-  `~/.copilot/skills`). Workers are Copilot CLI tabs launched with `--allow-all` for autonomy. The
+- `launch-copilot-terminal` skill installed (resolve its actual installed path and select its
+  host-specific `.sh` or `.ps1` helper; do not assume `~/.copilot/skills`). Workers are Copilot CLI
+  terminals launched with `--allow-all` for autonomy. The
   reviewer is additionally launched with `--agent PAW-Review`, so the **`PAW-Review` custom agent must be
   installed** (`~/.copilot/agents/PAW-Review.agent.md`); confirm `copilot --help` lists `--agent` and the
   agent resolves. (The implementer is a general session that loads its PAW skill via the prompt — no
@@ -62,7 +65,9 @@ Worker launch prompts are generated from bundled, parameterized templates:
 - `gh` authenticated for the target repo. **Follow the user's Copilot instructions for which gh
   account/config to use** (personal vs work). The orchestrator and the workers must all use an account
   that can read the repo, push, open PRs, and (for the orchestrator) merge.
-- The PAW skills and `paw-pr-lifecycle` + `loop` skills installed (workers rely on them).
+- The PAW skills and `paw-pr-lifecycle` + `loop` skills installed (workers rely on their lifecycle
+  contract). On macOS the generated prompt uses shell-native `gh` commands and the Copilot recurring
+  schedule sentry, so PowerShell-only lifecycle helpers are not required.
 
 ## Operating principles
 

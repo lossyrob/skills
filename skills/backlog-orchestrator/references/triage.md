@@ -8,8 +8,8 @@ config per issue. Persist it so phase 3 can execute without re-asking.
 Pull candidate issues and present them for selection. Default to open, unassigned issues; let the user
 narrow by label/milestone/text.
 
-```powershell
-gh issue list --repo <owner/repo> --state open --limit 100 `
+```bash
+gh issue list --repo <owner/repo> --state open --limit 100 \
   --json number,title,labels,milestone,updatedAt
 ```
 
@@ -71,14 +71,19 @@ customizes a specific issue.
 
 ## Step 4 — Persist the run manifest
 
+On macOS, set the run-level `terminal_app` preference. Default to `auto` so iTerm2 is used when
+installed and Terminal.app remains a zero-configuration fallback; use `iterm2` or `terminal` only when
+the user explicitly chooses one.
+
 Create the run tables (the shared `todos` table is used separately for lifecycle progress):
 
 ```sql
 CREATE TABLE IF NOT EXISTS run_meta (key TEXT PRIMARY KEY, value TEXT);
--- run_meta keys: runid, repo, repo_path, telex_backend, base_branch_default, gh_note, created_at
+-- run_meta keys: runid, repo, repo_path, telex_backend, terminal_app, base_branch_default, gh_note, created_at
 -- telex_backend: the single telex store every session in this run shares (e.g. a local sqlite
 --   exchange, or a named backend). Choose it at triage and inject it into every worker prompt as
 --   {{telexBackend}}; backend selection/mechanics live in the telex skill (see telex-protocol.md).
+-- terminal_app: macOS launch preference: auto (prefer iTerm2, fallback Terminal.app), iterm2, or terminal.
 
 CREATE TABLE IF NOT EXISTS issues (
   issue_number     INTEGER PRIMARY KEY,

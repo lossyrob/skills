@@ -41,18 +41,24 @@ Convene a bounded multi-model, multi-perspective deliberation to produce a recom
 
 ### launch-copilot-terminal
 
-Launch a new Windows Terminal tab running Copilot CLI with a requested title, tab color, and working directory. Supports a prompt-driven interactive session, an existing-session resume, and targeting either a separate window or the current Windows Terminal window. Useful for starting parallel Copilot sessions, focused worker windows, or opening a resumed session beside the current one.
+Launch a new iTerm2, Terminal.app, or Windows Terminal session running Copilot CLI with a requested
+title, color label, and working directory. Supports automatic macOS terminal selection, a prompt-driven
+interactive session, an existing-session resume, and targeting either a separate window or the current
+terminal window. Useful for starting parallel Copilot sessions, focused worker windows, or opening a
+resumed session beside the current one.
 
 **Trigger phrases:** "launch Copilot terminal", "open Copilot window", "start Copilot session", "spawn Copilot worker"
 
 **Features:**
-- Opens a Windows Terminal tab with a chosen title and tab color
+- Opens iTerm2/Terminal.app on macOS or Windows Terminal on Windows with a chosen title and color identifier
+- macOS `auto` mode prefers iTerm2 (also accepts `iterm`/`terminal2`) and falls back to Terminal.app
 - Two modes: **prompt mode** starts Copilot with `copilot -i <prompt>`; **resume mode** reattaches to an existing session with `copilot --resume <id-or-name>` (no prompt submitted)
-- `-Window {new|current}` selects whether the tab opens in a separate window (`wt -w -1`, the default) or in the current Windows Terminal window (`wt -w 0`)
+- New/current window targeting on both platforms; only Terminal.app may request Accessibility permission for current-window tab creation
 - Supports explicit working directories, extra Copilot CLI arguments, and prompt files
 - Includes dry-run output for inspecting the generated launch command
 
-**Requirements:** Windows, Windows Terminal (`wt.exe`), PowerShell 5.1+/7+, and Copilot CLI on `PATH`.
+**Requirements:** macOS with iTerm2 or Terminal.app and Bash, or Windows with Windows Terminal
+(`wt.exe`) and PowerShell 5.1+/7+; Copilot CLI on `PATH`.
 
 ### loop
 
@@ -126,14 +132,18 @@ Drive a backlog of GitHub issues to PRs autonomously and sequentially. The loade
 
 **Features:**
 - Four-phase model: telex station setup → interactive triage (S/M/L sizing + per-tier config) → sequential per-issue execution → merge gate + advance
-- Spawns an implementer (paw-lite, loaded as a skill) and an optional reviewer (launched as the `PAW-Review` agent with autonomous review submission) in their own terminals via [`launch-copilot-terminal`](#launch-copilot-terminal); they run the review handshake over telex (review-ready → review-posted → re-review → `🐾 +1`), not GitHub-comment polling
+- Spawns an implementer (paw-lite, loaded as a skill) and an optional reviewer (launched as the `PAW-Review` agent with autonomous review submission) in their own iTerm2/Terminal.app or Windows Terminal sessions via [`launch-copilot-terminal`](#launch-copilot-terminal); they run the review handshake over telex (review-ready → review-posted → re-review → `🐾 +1`), not GitHub-comment polling
 - Last-line **merge gate**: an Opus subagent detects high-spread *preference forks* the builder should own (a filtered work-geometry lens, not a correctness re-review), tuned by a per-issue care-knob — auto-merges clear/low-spread PRs and routes preference-debt / constitution / human-floor PRs to human review
 - **Deferred-work tracking**: every carry-forward item is harvested at the gate (field report + diff markers) and driven to a terminal disposition (filed / folded / skipped / done / moot) — the run is not complete while any item is open
 - **Deferred human-review holds**: a PR routed to you stays live — the implementer's merge sentry keeps it mergeable (repairing CI/conflicts) until you merge, then reports back for stand-down
 - Field reports on each issue + a run ledger; a final report bubbles up pivots, preference debt, no-auto-merge decisions, deferred work, and learnings, plus a `process-feedback` → skill-improvement loop
 - Durable telex backend pinning so messages survive holder restarts and wake idle worker sessions
 
-**Requirements:** Windows + Windows Terminal (for `launch-copilot-terminal`), Copilot CLI on `PATH`, [telex](https://github.com/lossyrob/telex) on `PATH`, GitHub CLI authenticated for the target repo, and the installed skills [`launch-copilot-terminal`](#launch-copilot-terminal), [`paw-pr-lifecycle`](#paw-pr-lifecycle), [`loop`](#loop), [`spar`](#spar), plus the PAW workflow skills (paw-lite / paw-review-workflow) and the `PAW-Review` custom agent.
+**Requirements:** macOS with iTerm2 or Terminal.app, or Windows with Windows Terminal, Copilot CLI on `PATH`,
+[telex](https://github.com/lossyrob/telex) on `PATH`, GitHub CLI authenticated for the target repo,
+and the installed skills [`launch-copilot-terminal`](#launch-copilot-terminal),
+[`paw-pr-lifecycle`](#paw-pr-lifecycle), [`loop`](#loop), [`spar`](#spar), plus the PAW workflow
+skills (paw-lite / paw-review-workflow) and the `PAW-Review` custom agent.
 
 ### spar
 

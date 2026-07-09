@@ -146,7 +146,7 @@ the branch is deleted; when in doubt at `balanced`, treat low-confidence as cost
 
 Use the gh account per the user's Copilot instructions (personal vs work for the target repo).
 
-```powershell
+```bash
 gh pr merge <pr> --repo <repo> --squash --delete-branch
 # Verify the issue closed (squash "Closes #n" auto-closes only on the default branch):
 gh issue view <issue> --repo <repo> --json state

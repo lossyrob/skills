@@ -5,14 +5,26 @@ issue, drive it to a terminal state (`merged`, `human-review`, or `blocked`), th
 
 ## Resolve the launcher once
 
+Detect the host OS and resolve the matching helper from the installed skill. Do not assume a fixed
+plugin installation path.
+
+macOS:
+
+```bash
+launch=$(find "$HOME/.copilot" -type f \
+  -path '*/launch-copilot-terminal/Launch-CopilotTerminal.sh' -print -quit)
+test -n "$launch" && test -x "$launch"
+```
+
+Windows:
+
 ```powershell
 $launch = (Get-ChildItem "$env:USERPROFILE\.copilot" -Recurse -Filter 'Launch-CopilotTerminal.ps1' `
   -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
-# Typical: ...\installed-plugins\lossyrob-skills\lossyrob-skills\skills\launch-copilot-terminal\Launch-CopilotTerminal.ps1
 ```
 
 `repo_path` (local checkout) and `repo` (`owner/repo`) come from `run_meta`. Workers create their own
-worktrees from `repo_path`, so launch them with `-Cwd <repo_path>`.
+worktrees from `repo_path`, so launch them with that path as their working directory.
 
 ## The per-issue loop
 
@@ -22,9 +34,9 @@ For the current issue `#n` with its manifest row:
    lifecycle `todo` to `in_progress`.
 
 2. **Generate prompt files.** Fill the templates and write each to a **UTF-8** file (long prompts →
-   use `-PromptFile`). Substitute every `{{...}}` placeholder:
-   - `templates/implementer-prompt.md` → `<session files>\prompts\impl-<n>.md`
-   - `templates/reviewer-prompt.md` → `<session files>\prompts\review-<n>.md` (only if `reviewer_enabled`)
+   use the launcher's prompt-file mode). Substitute every `{{...}}` placeholder:
+   - `templates/implementer-prompt.md` → `<session-files>/prompts/impl-<n>.md`
+   - `templates/reviewer-prompt.md` → `<session-files>/prompts/review-<n>.md` (only if `reviewer_enabled`)
 
    Required substitutions (both): `{{runid}}`, `{{repo}}`, `{{issue}}`, `{{telexBackend}}` (from
    `run_meta`), `{{orchestratorAddress}}`, `{{ghNote}}` (the user's gh-account guidance), `{{baseBranch}}`.
@@ -32,12 +44,31 @@ For the current issue `#n` with its manifest row:
    `{{implConfig}}`, `{{workstreamId}}` (use `<runid>-<n>`). Reviewer also: `{{reviewAddress}}`,
    `{{implAddress}}`, `{{reviewConfig}}`.
 
-   Write prompt files as UTF-8 (`Set-Content -Encoding utf8` or Python `Path.write_text(...,
-   encoding="utf-8")`) to avoid mojibake in the launched session.
+   Write prompt files as UTF-8 (`printf '%s' "$prompt" > "$path"`, `Set-Content -Encoding utf8`, or
+   Python `Path.write_text(..., encoding="utf-8")`) to avoid mojibake in the launched session.
 
 3. **Launch reviewer first (if enabled), then implementer.** telex buffers messages to addresses that
    are not yet bound, so order is not strictly racey, but launching the reviewer first
    means it is already waiting when `review-ready` arrives.
+
+   macOS:
+
+   ```bash
+   if [[ $reviewer_enabled == true ]]; then
+     "$launch" --title "review #<n>" --color purple --cwd "<repo_path>" \
+       --terminal "<terminal_app>" \
+       --prompt-file "<...>/review-<n>.md" \
+       --copilot-arg=--allow-all --copilot-arg=--agent --copilot-arg=PAW-Review
+   fi
+   "$launch" --title "impl #<n>" --color green --cwd "<repo_path>" \
+     --terminal "<terminal_app>" --prompt-file "<...>/impl-<n>.md" --copilot-arg=--allow-all
+   ```
+
+   `--terminal auto` prefers iTerm2 (also known as iTerm/Terminal2) when installed and falls back to
+   Terminal.app. Use the run manifest's `terminal_app` override (`iterm2` or `terminal`) when the user
+   chooses one explicitly.
+
+   Windows:
 
    ```powershell
    if ($reviewerEnabled) {
@@ -53,7 +84,8 @@ For the current issue `#n` with its manifest row:
    (overriding the agent's pending/human-submit Human Control Point) so the telex handshake works. The
    **implementer does NOT use `--agent PAW`** — its `Workflow Identity` is `paw-lite` (a lighter skill),
    whereas the `PAW` agent runs the full spec→…→pr workflow; paw-lite is loaded via the prompt instead.
-   Append `"--model",<model>` to either when the issue config pins a session model.
+   Add `--model <model>` through the host launcher's Copilot-argument syntax when the issue config pins
+   a session model.
 
 4. **Wait for this issue's terminal message** on your station (`merge-ready` or `blocked`). It arrives
       as a telex turn via your push bridge (telex-protocol.md). A `merged` from a **past** human-pended issue may also
@@ -67,7 +99,7 @@ For the current issue `#n` with its manifest row:
      it is a first-class input to the gate and may already name the forks). Run the **merge gate**
      ([merge-gate.md](merge-gate.md)). It returns one of:
      - `merge` → squash-merge, verify issue closed, then **stand down merged**:
-       ```powershell
+       ```bash
        gh pr merge <pr> --repo <repo> --squash --delete-branch
        ```
        Reply in the `merge-ready` thread with a `stand-down-merged` message (metadata `{pr}`), and also
