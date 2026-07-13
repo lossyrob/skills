@@ -2,7 +2,8 @@
 
 Generated and launched by the orchestrator when `reviewer_enabled` (lifecycle.md). Fill every `{{...}}`,
 write to a UTF-8 file, and launch the reviewer **as the PAW-Review agent**:
-`launch-copilot-terminal -PromptFile ... -CopilotArgs @("--allow-all","--agent","PAW-Review"[,"--model",<model>])`.
+use the host-specific `launch-copilot-terminal` helper with `--allow-all --agent PAW-Review`
+(and optionally `--model <model>`).
 The text below the line is the prompt the PAW-Review agent session receives as its first message.
 
 Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{baseBranch}}` `{{ghNote}}` `{{telexBackend}}`
@@ -106,27 +107,27 @@ the PR head (including a clean **+1 with zero inline comments** — never skip t
 **The marker glyph is the paw-prints emoji `U+1F43E` (🐾) — it is easy to emit the WRONG codepoint
 (e.g. U+1FAE7).** Construct the body deterministically from the escaped codepoint, write it UTF-8, post
 via `--body-file`, then **verify the posted body actually starts with U+1F43E before relying on it**:
-```powershell
-$marker = [char]::ConvertFromUtf32(0x1F43E) + ' PAW Review: +1'
-Set-Content -Path review-body.md -Encoding utf8 -Value ($marker + "`n`n<verdict + nit:/optional:/follow-up: notes>")
+```bash
+marker=$'\360\237\220\276 PAW Review: +1'
+printf '%s\n\n%s\n' "$marker" '<verdict + nit:/optional:/follow-up: notes>' > review-body.md
 gh pr review <pr> --repo {{repo}} --comment --body-file review-body.md
-# verify: first scalar of the latest review body must be 1F43E (🐾), not another emoji
-$body = gh pr view <pr> --repo {{repo}} --json reviews --jq '.reviews[-1].body'
-'{0:X}' -f [System.Char]::ConvertToUtf32($body,0)   # expect 1F43E
+# Verify the latest review starts with UTF-8 F0 9F 90 BE (U+1F43E).
+body=$(gh pr view <pr> --repo {{repo}} --json reviews --jq '.reviews[-1].body')
+test "$(printf '%s' "$body" | LC_ALL=C od -An -tx1 -N4 | tr -d ' \n')" = f09f90be
 ```
 
 For **actionable inline findings**, `gh pr review` cannot attach inline comments — use the reviews API
 with a `comments[]` array, anchored to changed lines and pinned to the head commit:
-```powershell
-gh api -X POST repos/{{repo}}/pulls/<pr>/reviews -f event=COMMENT -f commit_id=<headSha> `
-  -f body='<overall verdict + marker on a +1>' `
+```bash
+gh api -X POST repos/{{repo}}/pulls/<pr>/reviews -f event=COMMENT -f commit_id=<headSha> \
+  -f body='<overall verdict + marker on a +1>' \
   -f 'comments[][path]=src/foo.rs' -f 'comments[][line]=42' -f 'comments[][side]=RIGHT' -f 'comments[][body]=<finding>'
 ```
 Validate every anchor against the current diff hunk first (commit-pinned reviews may report `line=null`
 with `position`/`original_position` — verify each via the comment's **`diff_hunk` last line**, not the
-returned `line`). On Windows/PowerShell, parsing `gh api` JSON with `jq` + escaped quotes is brittle —
-pipe the JSON to `python -c` (or PowerShell `ConvertFrom-Json`) instead. Body carries the verdict + marker +
-unanchorable findings; `comments[]` carries line-tied findings.
+returned `line`). If shell quoting or JSON parsing gets brittle, write the request JSON to a UTF-8 file
+and use `gh api --input <file>` rather than constructing nested JSON inline. Body carries the verdict +
+marker + unanchorable findings; `comments[]` carries line-tied findings.
 
 **3. Tell the implementer the result over telex.** Send to the implementer (`{{implAddress}}`),
 attention `next-checkpoint`, disposition-required:

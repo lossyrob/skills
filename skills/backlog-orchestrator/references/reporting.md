@@ -31,10 +31,10 @@ Record an entry at each decision point:
 
 Workers send a `process-feedback` telex at finish describing friction with the telex instructions, the
 prompt templates, or the config. Collect them across the run. At end of run — and whenever you notice
-friction yourself — synthesize the actionable items and **improve the orchestrator skill**
-(`~/.copilot/skills/backlog-orchestrator`): edit the templates, telex-protocol, triage, or this file so
-the next run is smoother. Include a short "skill improvements absorbed / proposed" section in the final
-report.
+friction yourself — synthesize the actionable items and **improve the resolved installed orchestrator
+skill** (do not assume `~/.copilot/skills`): edit the templates, telex-protocol, triage, or this file so
+the next run is smoother. Include a short "skill improvements absorbed / proposed" section in the
+final report.
 
 ## Implementer field report (on the issue)
 
@@ -114,8 +114,8 @@ Suggested shape:
 
 To pull the field reports for synthesis:
 
-```powershell
-gh issue view <issue> --repo <repo> --json comments `
+```bash
+gh issue view <issue> --repo <repo> --json comments \
   --jq '.comments[] | select(.body | test("Field report|Outcome:")) | .body'
 ```
 

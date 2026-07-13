@@ -1,8 +1,8 @@
 # Implementer prompt template
 
 Generated and launched by the orchestrator (lifecycle.md). Fill every `{{...}}`, write to a UTF-8 file,
-launch with `launch-copilot-terminal -PromptFile ... -CopilotArgs @("--allow-all")`. The text below the
-line is the prompt the implementer session receives.
+and launch with the host-specific `launch-copilot-terminal` helper plus `--allow-all`. The text below
+the line is the prompt the implementer session receives.
 
 Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{workstreamId}}` `{{baseBranch}}` `{{ghNote}}`
 `{{telexBackend}}` `{{implAddress}}` `{{orchestratorAddress}}` `{{reviewerPresent}}` (`yes`/`no`)
@@ -66,8 +66,7 @@ otherwise use `Refs #{{issue}}` and make the partial/blocked state explicit. Put
 **CI gate — green before any review request.** Before requesting the first review *and* before every
 re-review, the PR head must be green: all required checks passed, none failing or pending, and no merge
 conflict. Wait for in-flight checks instead of requesting early. Simplest wait:
-```powershell
-$env:GH_CONFIG_DIR = "$env:APPDATA\gh-pub"
+```bash
 gh pr checks <pr> --repo {{repo}} --watch --fail-fast
 ```
 Exits 0 when all pass, non-zero on failure. If checks fail: **fix → validate → push → re-run the gate**.
@@ -100,9 +99,10 @@ If `{{reviewerPresent}}` == no, skip step 2 entirely and go straight to step 3 o
 **3. Merge sentry (stays a loop).** Enter paw-pr-lifecycle **PR Sentry** mode: keep watching
 merge-readiness (CI, conflicts, base moves) until stand-down. This is NOT replaced by telex.
 
-> **Sentry mechanism on Copilot CLI.** The paw-pr-lifecycle "PR Sentry" assumes the `loop` plugin's
-> detached worker + a `$result.event` shape. If your runtime has no literal loop worker (a Copilot CLI
-> session does not), implement the sentry as a **`manage_schedule` recurring self-prompt** that each
+> **Sentry mechanism on Copilot CLI.** The paw-pr-lifecycle "PR Sentry" may describe PowerShell helper
+> scripts or a detached worker + `$result.event` shape. On macOS, do not attempt to run those `.ps1`
+> helpers unless PowerShell is installed; use shell-native `gh` checks. If your runtime has no literal
+> loop worker, implement the sentry as a **recurring scheduled self-prompt** that each
 > tick re-checks `gh pr view <pr> --json mergeStateStatus,mergeable,reviewDecision` + `gh pr checks`;
 > the orchestrator's stand-down arrives separately as a telex turn via your bridge. Either mechanism
 > satisfies the contract: keep watching merge-readiness until stand-down; repair CI/conflicts; do not merge.
