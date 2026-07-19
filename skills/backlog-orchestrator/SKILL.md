@@ -58,8 +58,11 @@ Worker launch prompts are generated from bundled, parameterized templates:
   [references/telex-protocol.md](references/telex-protocol.md) for the run-specific contract.
 - `launch-copilot-terminal` skill installed (resolve its actual installed path and select its
   host-specific `.sh` or `.ps1` helper; do not assume `~/.copilot/skills`). Workers are Copilot CLI
-  terminals launched with `--allow-all` for autonomy. The
-  reviewer is additionally launched with `--agent PAW-Review`, so the **`PAW-Review` custom agent must be
+  terminals launched with `--allow-all` for autonomy. **Launch mode is inherited:** if this
+  orchestrator's Copilot loader command line contains `--yolo`, every implementer and reviewer launch
+  must also include `--yolo`; persist that decision as `inherit_yolo` in the run manifest so later
+  launches cannot silently drop it. The reviewer is additionally launched with `--agent PAW-Review`,
+  so the **`PAW-Review` custom agent must be
   installed** (`~/.copilot/agents/PAW-Review.agent.md`); confirm `copilot --help` lists `--agent` and the
   agent resolves. (The implementer is a general session that loads its PAW skill via the prompt — no
   `--agent`.)

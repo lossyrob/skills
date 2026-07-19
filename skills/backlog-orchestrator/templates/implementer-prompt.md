@@ -1,8 +1,9 @@
 # Implementer prompt template
 
 Generated and launched by the orchestrator (lifecycle.md). Fill every `{{...}}`, write to a UTF-8 file,
-and launch with the host-specific `launch-copilot-terminal` helper plus `--allow-all`. The text below
-the line is the prompt the implementer session receives.
+and launch with the host-specific `launch-copilot-terminal` helper plus the shared worker autonomy
+arguments. Those arguments always include `--allow-all` and also include `--yolo` when the launching
+orchestrator inherited `--yolo`. The text below the line is the prompt the implementer session receives.
 
 Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{workstreamId}}` `{{baseBranch}}` `{{ghNote}}`
 `{{telexBackend}}` `{{implAddress}}` `{{orchestratorAddress}}` `{{reviewerPresent}}` (`yes`/`no`)

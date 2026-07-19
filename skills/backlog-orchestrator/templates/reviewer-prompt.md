@@ -2,8 +2,9 @@
 
 Generated and launched by the orchestrator when `reviewer_enabled` (lifecycle.md). Fill every `{{...}}`,
 write to a UTF-8 file, and launch the reviewer **as the PAW-Review agent**:
-use the host-specific `launch-copilot-terminal` helper with `--allow-all --agent PAW-Review`
-(and optionally `--model <model>`).
+use the host-specific `launch-copilot-terminal` helper with the shared worker autonomy arguments plus
+`--agent PAW-Review` (and optionally `--model <model>`). The shared arguments always include
+`--allow-all` and also include `--yolo` when the launching orchestrator inherited `--yolo`.
 The text below the line is the prompt the PAW-Review agent session receives as its first message.
 
 Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{baseBranch}}` `{{ghNote}}` `{{telexBackend}}`
