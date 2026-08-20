@@ -1,95 +1,107 @@
 ---
 name: clear-workplace-writing
-description: Write and revise clear workplace prose for engineering teams and engineering, product, and executive leadership. Use for technical explanations, design and architecture documents, proposals, decision records, incident and status updates, strategy memos, executive summaries, emails, PR descriptions, and other professional writing where readers need to understand an idea, trust the reasoning, or act on it. Adapt information structure to engineering, leadership, or mixed audiences while preserving technical precision, facts, uncertainty, and the writer's intended meaning.
+description: Write, revise, or review clear workplace prose for engineers and leadership. Use for documents, proposals, reports, memos, status and incident updates, executive narratives, emails, PR descriptions, and other professional writing. Preserves facts, technical precision, uncertainty, and the author's voice while improving structure, clarity, and usefulness.
 ---
 
 # Clear Workplace Writing
 
-Write so the intended reader can understand the important idea, trust the reasoning behind it, and know what to do with it while spending as little unnecessary effort as possible.
+Write so the intended reader can understand the important idea, trust the
+reasoning behind it, and know what to do with it without unnecessary effort.
 
-Do not optimize for brevity by itself. Optimize for reader effort, precision, and usefulness.
+Use [core-practices.md](core-practices.md) as the practical authority. It
+synthesizes the durable guidance in the bundled public-domain sources and the
+project's modern workplace-writing preferences.
 
-## Classify before writing
+## Choose an execution path
 
-Infer two dimensions from the request. Do not ask unless the ambiguity would materially change the result.
+### Direct
 
-**Audience**
-- `engineering`: engineers or technical collaborators who need mechanism, constraints, correctness, and implementation consequences.
-- `leadership`: engineering, product, or executive leaders who need significance, evidence, decisions, risks, and asks.
-- `mixed`: both. Lead with the leadership-level conclusion, then progressively disclose the technical reasoning.
+Write or revise in the current context when the material is short, supplied
+inline, or central to the current task.
 
-**Purpose**
-- `explain`: build an accurate mental model.
-- `propose`: recommend a change and defend the tradeoff.
-- `decide`: make options, criteria, and recommendation easy to evaluate.
-- `report-status`: communicate outcome, movement, risk, and next action.
-- `report-incident`: communicate impact, cause, mitigation, and remaining risk.
-- `instruct`: help a reader perform a task safely and correctly.
-- `persuade`: change a belief or priority using explicit reasoning and evidence.
+1. Read `core-practices.md`.
+2. Identify the audience, purpose, intended response, and facts the draft can
+   support.
+3. Draft or revise in the order given by the guide.
+4. Perform the guide's final Keep and Cut passes.
 
-Load [engineering-writing.md](references/engineering-writing.md) for engineering audiences, [leadership-writing.md](references/leadership-writing.md) for leadership audiences, and both for mixed audiences. Load [structure-and-reasoning.md](references/structure-and-reasoning.md) when organizing a substantial document, proposal, decision, or explanation.
+Do not create files or delegate a short passage merely to follow a workflow.
+Making no changes is a valid result when the passage already meets the guide.
 
-## Core principles
+### Contained editor
 
-Apply these principles to all prose.
+Use one strong general-purpose subagent when a document is large enough to
+crowd the main context, when writing is a side task in a context-heavy session,
+or when the user asks for a contained review.
 
-1. **Answer the reader's first question early.** Put the governing point, result, recommendation, or problem near the beginning. Do not make readers reenact the investigation before learning what it found.
-2. **Organize by reader need, not discovery chronology.** Group evidence under the claim it supports. Preserve chronology only when sequence is itself important.
-3. **Expose agency and action.** Make clear who or what does what. Prefer active voice when it clarifies agency. Use passive voice when the actor is unknown, irrelevant, intentionally omitted, or when the object is the established topic.
-4. **Prefer concrete claims.** Replace abstractions with mechanisms, examples, measurements, named components, or observable behavior when available.
-5. **Separate epistemic categories.** Distinguish observed fact, inference, assumption, recommendation, prediction, and uncertainty. Do not let a confident sentence blur the boundary.
-6. **Expose the causal chain.** When one condition leads to another, state the mechanism or reasoning that connects them. A sequence of facts is not automatically an explanation.
-7. **Preserve precise terminology.** Keep technical terms that carry real distinctions. Define unfamiliar terms when the audience may not know them. Never simplify a term into something less accurate merely to sound plain.
-8. **Use one name for one concept.** Do not rotate synonyms for variety when they refer to the same system, component, metric, or idea.
-9. **Control information flow.** Start sentences and paragraphs from context the reader already has, then introduce new information. Put important new information where it receives natural emphasis, often near the end of the sentence.
-10. **Give each paragraph a job.** Open with the paragraph's controlling idea when practical; use the rest to support, qualify, or apply it.
-11. **Cut words that do no work.** Remove ceremony, repeated conclusions, inflated adjectives, empty intensifiers, and transitions that add no relationship. Keep detail that reduces ambiguity or supports a decision.
-12. **State relationships explicitly.** Use plain connectors such as `because`, `therefore`, `however`, `for example`, and `in contrast` when the logical relationship would otherwise be implicit.
-13. **Keep evidence attached to the claim it supports.** Put metrics in context: baseline, comparison, time window, population, and important caveats.
-14. **Prefer direct statements to rhetorical staging.** Avoid canned preambles, fake questions, summary paragraphs that merely repeat the preceding section, and generic claims that something is "important" without saying why.
-15. **Preserve useful voice.** Clarity does not require sterile prose. Keep rhythm, humor, emphasis, and idiom when they help the reader and do not obscure meaning.
-16. **Break a rule when the rule harms the sentence.** The principles exist to improve comprehension and judgment, not to produce mechanically compliant prose.
+Prefer a file path over embedding a long document in the subagent prompt. Give
+the editor:
 
-## Write or revise
+- the source path and requested output path;
+- the path to `core-practices.md`;
+- the audience, purpose, requested response, and explicit user constraints;
+- whether to revise, comment, or do both.
 
-When writing from scratch:
-1. Identify the reader's likely question or decision.
-2. Write the governing point in one or two sentences.
-3. Arrange supporting claims in the order the reader needs them.
-4. Add only the technical detail, evidence, and context needed to make those claims trustworthy and actionable.
-5. Apply the audience-specific reference.
+Require the editor to:
 
-When revising existing prose:
-1. Preserve facts, commitments, uncertainty, technical distinctions, and intentional tone.
-2. Identify the actual governing point. Move it earlier if the draft buries it.
-3. Reorder paragraphs before polishing sentences. Structural problems rarely yield to copyediting.
-4. Repair agency, causality, terminology, information flow, and unnecessary abstraction.
-5. Cut repetition and ceremony last. Do not shorten away evidence or reasoning.
+1. Read the source and `core-practices.md`.
+2. Inventory material facts, numbers, dates, commitments, qualifications,
+   technical terms, and open questions before editing.
+3. Write a new revision rather than overwrite the source unless the user
+   explicitly requests in-place editing.
+4. Write a short review note recording structural changes, material deletions,
+   unresolved ambiguities, and anything that could not be preserved.
+5. Recheck the revision against the inventory.
+6. Return only the output paths and a concise summary to the main agent.
 
-Do not invent evidence, certainty, decisions, owners, deadlines, or implications that the source does not support.
+Keep iterative, approval-per-change editing in the main context so the user can
+control each revision.
 
-## Choose structure from purpose
+### Multi-perspective review
 
-Use [structure-and-reasoning.md](references/structure-and-reasoning.md) for detailed patterns. Default shapes:
+Use multi-perspective review only when the user explicitly requests it or the
+document is both consequential and structurally difficult. When the `council`
+skill is available, use it instead of building a separate reviewer hierarchy.
+Use these independent lenses:
 
-- `explain`: governing idea -> mental model -> mechanism -> example -> limits or edge cases.
-- `propose`: problem -> recommendation -> why it works -> tradeoffs -> risks -> validation or next step.
-- `decide`: recommendation -> decision criteria -> options and consequences -> evidence -> unresolved uncertainty.
-- `report-status`: current state -> what changed -> impact -> risk/blocker -> next action or ask.
-- `report-incident`: impact -> current state -> cause and evidence -> mitigation -> remaining risk -> follow-up.
-- `instruct`: prerequisite/condition -> action -> expected result -> exception or recovery.
-- `persuade`: claim -> reasons -> evidence -> strongest objection -> consequence or requested action.
+1. structure, argument, and reader needs;
+2. accuracy, evidence, and uncertainty;
+3. sentence clarity, economy, emphasis, and voice.
 
-Treat these as defaults, not templates to fill mechanically.
+Have one synthesis editor resolve the findings. Do not assign reviewers by
+historical author; their advice overlaps too heavily.
 
-## Final audit
+## Source consultation
 
-Before returning substantial prose, perform one silent revision pass using [revision-checklist.md](references/revision-checklist.md). Check especially:
+Historical sources explain, challenge, or deepen a practice. They do not
+replace `core-practices.md`.
 
-- Can the intended reader identify the main point without reading the whole document?
-- Is technical detail attached to a decision, claim, mechanism, or risk?
-- Are facts, inference, and recommendation distinguishable?
-- Does each paragraph advance the reader's understanding?
-- Did the revision preserve important nuance rather than merely reduce word count?
+| Reference | Approximate cost | Consult when |
+|---|---:|---|
+| `references/elements-of-style-1918.md` | 17k tokens | A Strunk-specific pass or an exact rule is needed |
+| `references/abbott-index.md` | 1.6k tokens | Locate an Abbott rule |
+| `references/abbott-rules.md` | 17k tokens | Read only a rule identified by the index or a source tag |
+| `references/spencer-excerpts.md` | 2k tokens | Examine a cited rationale or qualification |
+| `references/sources.md` | small | Check provenance, editions, exclusions, or citation syntax |
 
-For examples of the desired transformations, load [examples.md](references/examples.md). For the intellectual provenance and limits of these rules, load [source-notes.md](references/source-notes.md).
+Never load all historical references for a routine edit. Read the synthesis
+first, then consult the smallest relevant source section. The source tags in
+`core-practices.md` provide addresses.
+
+## Invariants
+
+No stylistic rule may silently change:
+
+- a fact, number, date, name, or commitment;
+- the strength or scope of a claim;
+- uncertainty, risk, or an open question;
+- a technical distinction;
+- the author's intended meaning.
+
+Do not invent evidence, certainty, decisions, owners, deadlines, objections, or
+implications. If a requested style would compromise these invariants, preserve
+the invariant and explain the conflict.
+
+Explicit instructions in the current request govern style. Otherwise,
+`core-practices.md` governs. Historical sources are persuasive context rather
+than binding rules.

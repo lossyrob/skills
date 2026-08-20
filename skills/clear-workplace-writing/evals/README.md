@@ -23,5 +23,9 @@ Also record failure flags:
 - excessive compression;
 - discovery chronology retained without purpose;
 - generic "executive" language that obscures the real technical issue.
+- invented contrast or objection;
+- unsupported emphasis;
+- unnecessary rewriting of already-clear prose;
+- voice flattened into generic corporate language.
 
 The skill should win because readers can understand and act more reliably, not because it uses fewer words.
