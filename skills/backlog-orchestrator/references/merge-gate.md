@@ -137,7 +137,8 @@ the branch is deleted; when in doubt at `balanced`, treat low-confidence as cost
   ([reporting.md](reporting.md)) with the subagent's options + recommendation, so the status/final
   report bubbles it up ("I chose X; flip it if you care"). Stand down merged.
 - **human** → do not merge; record the well-lit bet (forks/options/recommendation/what-it-can't-see)
-  and the reason in the ledger; send **`human-review-pending`** to the implementer (and reviewer) so they
+  and the reason in the ledger; send **`human-review-pending`** through the selected runtime transport
+  to the implementer (and reviewer) so they
   **hold** — the implementer keeps the PR mergeable until the builder merges — then advance. Do **not**
   send a stand-down now; you will send `stand-down-merged` later when the implementer reports `merged`
   (or `stand-down-human` if the builder abandons the PR).
@@ -154,8 +155,10 @@ gh issue view <issue> --repo <repo> --json state
 gh issue close <issue> --repo <repo> --reason completed
 ```
 
-Then send `stand-down-merged` to the implementer (reply in the `merge-ready` thread) and to the
-reviewer address if a reviewer existed. Update `issues.status='merged'`, `pr_number`, `outcome_note`.
+Then send `stand-down-merged` through the selected runtime transport. In app mode, wait for each
+worker's `stand-down-complete` and archive its child session. In CLI mode, disposition the telex
+handoff and let each worker tear down its terminal/worktree/bridge. Update `issues.status='merged'`,
+`pr_number`, and `outcome_note`.
 
 ## What this gate is and is not
 

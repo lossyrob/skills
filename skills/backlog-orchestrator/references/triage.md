@@ -71,19 +71,22 @@ customizes a specific issue.
 
 ## Step 4 — Persist the run manifest
 
-On macOS, set the run-level `terminal_app` preference. Default to `auto` (Terminal.app); use `iterm2`
-or `terminal` only when the user explicitly chooses one. Before locking an iTerm2 run, disclose its
-one-time macOS Automation consent prompt.
+Persist the runtime selected by [runtime-selection.md](runtime-selection.md). Capture only that mode's
+transport fields:
+
+- **App:** current `project_id` and `project_session_id`. If the target repository belongs to another
+  configured project, resolve its exact id with `list_projects`; do not create a project without the
+  user's approval.
+- **CLI:** local `repo_path`, one shared `telex_backend`, and `terminal_app` (`auto`, `terminal`, or
+  explicitly selected `iterm2` on macOS). Before iTerm2, disclose the one-time Automation consent.
 
 Create the run tables (the shared `todos` table is used separately for lifecycle progress):
 
 ```sql
 CREATE TABLE IF NOT EXISTS run_meta (key TEXT PRIMARY KEY, value TEXT);
--- run_meta keys: runid, repo, repo_path, telex_backend, terminal_app, base_branch_default, gh_note, created_at
--- telex_backend: the single telex store every session in this run shares (e.g. a local sqlite
---   exchange, or a named backend). Choose it at triage and inject it into every worker prompt as
---   {{telexBackend}}; backend selection/mechanics live in the telex skill (see telex-protocol.md).
--- terminal_app: macOS launch preference: auto (Terminal.app), iterm2, or terminal.
+-- common keys: runid, runtime_mode (app|cli), repo, base_branch_default, gh_note, created_at
+-- app keys: project_id, orchestrator_session_id
+-- cli keys: repo_path, telex_backend, terminal_app, orchestrator_address
 
 CREATE TABLE IF NOT EXISTS issues (
   issue_number     INTEGER PRIMARY KEY,
@@ -99,6 +102,12 @@ CREATE TABLE IF NOT EXISTS issues (
   base_branch      TEXT,
   status           TEXT DEFAULT 'pending',  -- pending|running|merged|human-review|blocked
   pr_number        INTEGER,
+  -- App mode only:
+  implementer_session_id TEXT,
+  reviewer_session_id    TEXT,
+  -- CLI mode only:
+  implementer_address    TEXT,
+  reviewer_address       TEXT,
   outcome_note     TEXT
 );
 ```

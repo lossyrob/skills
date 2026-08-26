@@ -24,17 +24,16 @@ Record an entry at each decision point:
 - **Lifecycle** → `blocker` when a worker reports `blocked`; `merged` on a successful merge.
 - When you read a worker's field report (below), copy any **pivots** and **deferred** items into the
   ledger so the final report does not depend on re-reading every issue.
-- On `process-feedback` from a worker, log it as `kind='process-feedback'` — these are about the
-  **process/skill itself**, not the code.
+- On a `process-feedback` event from a worker, log it as `kind='process-feedback'` with the run's
+  `runtime_mode` — these are about the **process/skill itself**, not the code.
 
 ### Process feedback → skill improvement
 
-Workers send a `process-feedback` telex at finish describing friction with the telex instructions, the
-prompt templates, or the config. Collect them across the run. At end of run — and whenever you notice
-friction yourself — synthesize the actionable items and **improve the resolved installed orchestrator
-skill** (do not assume `~/.copilot/skills`): edit the templates, telex-protocol, triage, or this file so
-the next run is smoother. Include a short "skill improvements absorbed / proposed" section in the
-final report.
+Workers send a `process-feedback` event at finish through the selected runtime. Record
+`runtime_mode` with each item so app child-session/messaging/automation friction changes only app
+guidance, while terminal/telex/launcher friction changes only CLI guidance. Shared policy feedback may
+change triage, merge gate, or reporting. Include a short "skill improvements absorbed / proposed"
+section in the final report.
 
 ## Implementer field report (on the issue)
 
@@ -111,6 +110,10 @@ Suggested shape:
    folded, skipped+reason, moot, done). Flag any still `open` as needing triage **now** (the run is not
    complete while any remain open).
 6. **Learnings / context gaps:** recurring stale-context or assumption failures across issues.
+7. **Live workers:** human-review holds still running. In app mode include implementer/reviewer session
+   ids and archive completed children after `stand-down-complete`; in CLI mode include telex addresses
+   and leave bridges/terminals active until stand-down. State explicitly that the backlog pass is
+   reported but the orchestrator remains available until these holds resolve.
 
 To pull the field reports for synthesis:
 
