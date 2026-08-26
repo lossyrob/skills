@@ -35,7 +35,7 @@ you `merged`, and only then do you stand it down. Either way, you advance to the
 | Phase | What you do | Reference |
 |---|---|---|
 | 1. Runtime + run setup | Detect and persist `app` or `cli`, then load that mode's protocol. | [references/runtime-selection.md](references/runtime-selection.md) |
-| 2. Triage | With the user: select issues, size S/M/L, set per-tier + per-issue config (impl PAW config, reviewer on/off + PAW Review config, **merge disposition**, **care knob**, **posture**). | [references/triage.md](references/triage.md) |
+| 2. Triage | With the user: select issues, size S/M/L, set the run's default **PR title format**, then resolve per-tier + per-issue config (impl PAW config, reviewer on/off + PAW Review config, **merge disposition**, **care knob**, **posture**, title override). | [references/triage.md](references/triage.md) |
 | 3. Per-issue execution | Dispatch to the selected runtime lifecycle and drive one implementer (+ optional reviewer) pair. | [references/lifecycle.md](references/lifecycle.md) |
 | 4. Merge gate + advance | Run the last-line review, decide merge vs human, merge, stand down workers, advance. | [references/merge-gate.md](references/merge-gate.md) |
 | (cross-cutting) Reporting | Maintain the run ledger; produce the status/final report on demand. | [references/reporting.md](references/reporting.md) |
@@ -92,7 +92,8 @@ Worker prompts are runtime-specific. The runtime selector names the exact app or
 
 1. Confirm prerequisites; pick a short **run id** (e.g. `rb-2026-06-17a`).
 2. Persist `runtime_mode` and initialize its protocol state.
-3. Triage with the user → persist the run manifest (triage.md).
+3. Triage with the user → choose a human-readable PR title format and persist the run manifest
+   (triage.md).
 4. For each issue in order → execute (lifecycle.md) → merge gate (merge-gate.md) → record + advance.
 5. When all issues are terminal, resolve deferred work, perform mode-specific cleanup, and produce the
    final report (reporting.md).

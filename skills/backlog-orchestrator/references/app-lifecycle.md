@@ -45,8 +45,9 @@ For the current issue `#n` with its manifest row:
 
 3. **Create the implementer.** Render
    [app-implementer-prompt.md](../templates/app-implementer-prompt.md) only after the reviewer creation
-   returns. Fill `{{runid}}`, `{{repo}}`, `{{issue}}`, `{{orchestratorSessionId}}`, `{{ghNote}}`,
-   `{{baseBranch}}`, `{{reviewerSessionId}}` (or `none`), `{{reviewerPresent}}`, `{{implConfig}}`, and
+   returns. Fill `{{runid}}`, `{{repo}}`, `{{issue}}`, `{{issueTitle}}`,
+   `{{orchestratorSessionId}}`, `{{ghNote}}`, `{{baseBranch}}`, `{{reviewerSessionId}}` (or `none`),
+   `{{reviewerPresent}}`, `{{implConfig}}`, `{{prTitleFormat}}` (from the resolved issue row), and
    `{{workstreamId}}` (use `<runid>-<n>`), then create it:
 
    ```text

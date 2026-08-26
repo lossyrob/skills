@@ -133,6 +133,7 @@ Drive a backlog of GitHub issues to PRs autonomously and sequentially in either 
 
 **Features:**
 - Four-phase model: runtime selection/setup → interactive triage (S/M/L sizing + per-tier config) → sequential per-issue execution → merge gate + advance
+- Human-readable PR titles by default, with a run-wide format and per-tier/per-issue overrides using issue, title, and optional workstream tokens
 - App mode creates isolated child project sessions and coordinates them with native cross-session messages; CLI mode launches isolated terminal/worktree sessions and coordinates them with telex
 - Both modes run the same implementer/reviewer handshake (review-ready → review-posted → re-review → `🐾 +1`) and the same GitHub audit trail
 - Last-line **merge gate**: an Opus subagent detects high-spread *preference forks* the builder should own (a filtered work-geometry lens, not a correctness re-review), tuned by a per-issue care-knob — auto-merges clear/low-spread PRs and routes preference-debt / constitution / human-floor PRs to human review

@@ -40,9 +40,9 @@ worktrees.
 
    Common substitutions: `{{runid}}`, `{{repo}}`, `{{issue}}`, `{{telexBackend}}`,
    `{{orchestratorAddress}}`, `{{ghNote}}`, and `{{baseBranch}}`. Implementer also receives
-   `{{implAddress}}`, `{{reviewAddress}}`, `{{reviewerPresent}}`, `{{implConfig}}`, and
-   `{{workstreamId}}`. Reviewer also receives `{{reviewAddress}}`, `{{implAddress}}`, and
-   `{{reviewConfig}}`.
+   `{{issueTitle}}`, `{{implAddress}}`, `{{reviewAddress}}`, `{{reviewerPresent}}`, `{{implConfig}}`,
+   `{{prTitleFormat}}` (from the resolved issue row), and `{{workstreamId}}`. Reviewer also receives
+   `{{reviewAddress}}`, `{{implAddress}}`, and `{{reviewConfig}}`.
 
 3. **Launch reviewer first, then implementer.**
 
