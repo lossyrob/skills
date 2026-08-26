@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Marketplace for reusable GitHub Copilot skills by lossyrob",
-    "version": "0.1.26"
+    "version": "0.1.27"
   },
   "plugins": [
     {
       "name": "lossyrob-skills",
       "description": "Reusable GitHub Copilot skills by lossyrob",
-      "version": "0.1.26",
+      "version": "0.1.27",
       "source": ".",
       "author": {
         "name": "Rob Emanuele"

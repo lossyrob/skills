@@ -140,7 +140,7 @@ Drive a backlog of GitHub issues to PRs autonomously and sequentially in either 
 - **Deferred-work tracking**: every carry-forward item is harvested at the gate (field report + diff markers) and driven to a terminal disposition (filed / folded / skipped / done / moot) — the run is not complete while any item is open
 - **Deferred human-review holds**: a PR routed to you stays live — app session automation or the CLI loop sentry keeps it mergeable until you merge, then reports back for stand-down
 - Field reports on each issue + a run ledger; a final report bubbles up pivots, preference debt, no-auto-merge decisions, deferred work, and learnings, plus a `process-feedback` → skill-improvement loop
-- Runtime-specific durable coordination and cleanup: native wakeups plus archival in app mode; telex push delivery plus terminal/worktree teardown in CLI mode
+- Runtime-specific durable coordination and lifecycle: native wakeups plus retained completed sessions in app mode; telex push delivery plus terminal/worktree teardown in CLI mode
 - App review handoffs use deterministic receipts and one bounded replay to recover an idle-session wakeup miss without duplicate reviews
 
 **Requirements:** GitHub CLI authenticated for the target repo, [`paw-pr-lifecycle`](#paw-pr-lifecycle),

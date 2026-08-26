@@ -125,40 +125,36 @@ For the current issue `#n` with its manifest row:
      send `stand-down-human` to its workers, and advance. Pause the whole run only if the user requests
      it.
 
-6. **Archive after stand-down.** Each worker responds with `stand-down-complete` after clearing its
-   automation and posting any required feedback/addendum. Verify the sender id, then call
-   `archive_session` for that child. Do not archive a human-review worker merely because the issue is
-   terminal for advancement.
+6. **Retain after stand-down.** Each worker responds with `stand-down-complete` after clearing its
+   automation and posting any required feedback/addendum. Verify the sender id, record the child as
+   completed, and leave its app-managed session/worktree available for inspection or resumption.
+   Archive only if the user explicitly requests cleanup.
 
-   If `archive_session` fails with a worktree/process file lock, wait for the child to be idle and
-   retry once. A second failure is a cleanup blocker: retain the session id and error in the ledger,
-   surface it in the final report, and leave the app-managed worktree untouched.
-
-   A stand-down acknowledgement can arrive while a later issue is running. Archive it when received,
-   update the ledger, and resume the active issue.
+   A stand-down acknowledgement can arrive while a later issue is running. Record it and resume the
+   active issue.
 
 7. **Advance.** Mark the issue lifecycle `todo` done. Move to the next pending issue by `position`.
    When no issues remain, gate the backlog-pass report on:
 
    - no `deferred.status='open'` rows;
-   - every merged/blocked issue's child sessions acknowledged and were archived;
+   - every merged/blocked issue's child sessions acknowledged stand-down;
    - human-review sessions remain intentionally alive and are listed in the final report.
 
    Run deferred triage ([reporting.md](reporting.md)), then produce the final backlog report. If any
    human-review holds remain, the orchestrator session must stay resident after reporting. The run is
-   fully closed only after every held PR is merged or abandoned, its workers acknowledge stand-down,
-   and its child sessions are archived.
+   fully closed only after every held PR is merged or abandoned and its workers acknowledge
+   stand-down. Completed child sessions remain retained.
 
 ## Stand-down is the worker's true terminus
 
 Workers do not end at PR creation or `merge-ready`. The implementer posts its field report and enables
 its recurring sentry automation before signalling ready.
 
-- **Auto-merge:** merge, send `stand-down-merged`, wait for `stand-down-complete`, archive.
+- **Auto-merge:** merge, send `stand-down-merged`, wait for `stand-down-complete`, retain.
 - **Human review:** send `human-review-pending` and advance. The implementer keeps the sentry automation
   active until the builder merges. It then sends `merged`; send `stand-down-merged`, wait for
-  completion, and archive.
-- **Abandoned/blocked:** send `stand-down-human`, wait for completion, and archive.
+  completion, and retain.
+- **Abandoned/blocked:** send `stand-down-human`, wait for completion, and retain.
 
 Several human-review sessions may remain idle and unarchived while later issues run. This is expected.
 Their recurring implementer automation maintains merge readiness; native messages wake reviewers only

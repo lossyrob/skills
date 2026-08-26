@@ -1,7 +1,7 @@
 ---
 name: backlog-orchestrator
 description: Drive a backlog of GitHub issues to PRs autonomously and sequentially in either the GitHub Copilot app or Copilot CLI. The orchestrator detects the runtime, then uses app-native child sessions and messaging or terminal workers and telex while sharing triage, merge-gate, deferred-work, and reporting policy. Use when asked to work through a backlog/queue of issues autonomously, run an autonomous issue-fixing pipeline, or orchestrate PAW sessions across many issues.
-compatibility: "Requires GitHub CLI authenticated for the target repo, paw-pr-lifecycle, spar, the PAW workflow skills, and the PAW-Review custom agent. App mode additionally requires project child-session, messaging, automation, and archival tools. CLI mode additionally requires Copilot CLI, telex, launch-copilot-terminal, and loop."
+compatibility: "Requires GitHub CLI authenticated for the target repo, paw-pr-lifecycle, spar, the PAW workflow skills, and the PAW-Review custom agent. App mode additionally requires project child-session, messaging, and automation tools. CLI mode additionally requires Copilot CLI, telex, launch-copilot-terminal, and loop."
 ---
 
 # Backlog Orchestrator
@@ -46,7 +46,7 @@ Worker prompts are runtime-specific. The runtime selector names the exact app or
 
 - Select and validate a runtime using [references/runtime-selection.md](references/runtime-selection.md).
   - App mode requires `create_session`, `send_session_message`, `save_session_automation`,
-    `get_session`, `respond_to_session_plan`, and `archive_session`, plus project/session context.
+      `get_session`, and `respond_to_session_plan`, plus project/session context.
   - CLI mode requires `copilot`, `telex`, `loop`, and the
     `launch-copilot-terminal` skill with the host-specific launcher.
 - `gh` authenticated for the target repo. **Follow the user's Copilot instructions for which gh

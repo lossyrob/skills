@@ -156,9 +156,9 @@ gh issue close <issue> --repo <repo> --reason completed
 ```
 
 Then send `stand-down-merged` through the selected runtime transport. In app mode, wait for each
-worker's `stand-down-complete` and archive its child session. In CLI mode, disposition the telex
-handoff and let each worker tear down its terminal/worktree/bridge. Update `issues.status='merged'`,
-`pr_number`, and `outcome_note`.
+worker's `stand-down-complete` and retain the completed child session/worktree. In CLI mode,
+disposition the telex handoff and let each worker tear down its terminal/worktree/bridge. Update
+`issues.status='merged'`, `pr_number`, and `outcome_note`.
 
 ## What this gate is and is not
 

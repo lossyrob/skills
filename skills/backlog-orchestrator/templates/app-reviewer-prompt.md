@@ -96,7 +96,7 @@ create or delete another worktree.
 7. **Stand down.** `human-review-pending` means remain available for late re-review messages.
    `stand-down-merged` or `stand-down-human` is terminal: send the orchestrator `process-feedback`,
    then `stand-down-complete`, and end. Do not manually delete the app worktree; the orchestrator
-   archives this child session after completion.
+   retains this child session after completion.
 
 ## Notes
 

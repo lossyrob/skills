@@ -154,7 +154,8 @@ The orchestrator will send one of:
 - **`stand-down-human`** - clear the automation, post an addendum with the terminal state, send
   `process-feedback`, then `stand-down-complete`; end.
 
-The orchestrator archives this child session after `stand-down-complete`.
+The orchestrator retains this child session after `stand-down-complete` for later inspection or
+resumption. Do not request or perform archival.
 
 ## Blockers
 
@@ -191,4 +192,4 @@ Post an addendum at stand-down only when something changed after merge-ready.
 
 At stand-down, send the orchestrator a `process-feedback` event covering app messaging, child-session
 setup, automation, prompt/config friction, what worked, and concrete skill improvements. Then send
-`stand-down-complete` as a separate event so the orchestrator can archive this session.
+`stand-down-complete` as a separate event so the orchestrator can record this session as completed.

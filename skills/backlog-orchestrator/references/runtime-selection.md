@@ -10,7 +10,7 @@ Select **app** when all of these are true:
 - workspace context identifies a GitHub Copilot app project session and supplies
   `project_session_id` plus `project_id`;
 - `create_session` and `send_session_message` are available;
-- session automation and archival tools are available.
+- session automation tools are available.
 
 Otherwise select **cli** when the session is running in Copilot CLI and telex,
 `launch-copilot-terminal`, and `loop` are available. `paw-pr-lifecycle` is a shared prerequisite.
@@ -42,4 +42,4 @@ Both transports use the same event kinds and lifecycle meaning:
 `stand-down-human`.
 
 App mode additionally uses `peer-registered` and `stand-down-complete` for session-id exchange and
-safe archival. CLI mode uses telex dispositions and terminal teardown instead.
+an explicit retained-session terminus. CLI mode uses telex dispositions and terminal teardown instead.

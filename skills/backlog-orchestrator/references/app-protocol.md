@@ -82,7 +82,7 @@ and ignore a replay whose event id was already accepted.
 | `merged` | impl -> orchestrator | A human-pended PR was merged by the builder; implementer requests stand-down. |
 | `stand-down-merged` | orchestrator -> impl/review | PR merged; clear automation, add any field-report addendum, report feedback, and finish. |
 | `stand-down-human` | orchestrator -> impl/review | Terminal stop without a merge; clear automation, report feedback, and finish. |
-| `stand-down-complete` | impl/review -> orchestrator | Worker completed stand-down and its app session can be archived. |
+| `stand-down-complete` | impl/review -> orchestrator | Worker completed stand-down; record and retain its app session. |
 
 The GitHub review and field report remain the auditable source of truth. Native messages carry
 wakeups, session pointers, and state transitions.
@@ -110,7 +110,7 @@ uses `save_session_automation` to attach a recurring 15-minute autopilot check t
 wake checks the PR, repairs actionable failures, requests re-review after substantive changes, and
 otherwise ends the turn. Stand-down clears the automation with `save_session_automation({clear:true})`.
 
-## Recovery and cleanup
+## Recovery and retained sessions
 
 - Normal coordination is event-driven. Do not repeatedly call `get_session` while waiting.
 - For an unacknowledged app review request, use the single receipt/replay recovery above before
@@ -120,14 +120,15 @@ otherwise ends the turn. Stand-down clears the automation with `save_session_aut
   autopilot specifically to avoid this state.
 - If a worker failed, send a corrective native message or relaunch only after checking whether its PR
   or sibling session already progressed.
-- After receiving `stand-down-complete`, archive that child with `archive_session`. Archiving is the
-  app-owned worktree cleanup mechanism; workers must not manually delete app-managed worktrees.
-- If archival fails because the child process or a file handle still owns the worktree, leave the
-  worktree intact, wait for the child to become idle, and retry once. If it fails again, record a
-  cleanup blocker with the session id and error and surface it in the final report. Do not delete the
-  worktree manually or treat the run as fully closed.
+- After receiving `stand-down-complete`, retain the child session and its app-managed worktree so the
+  builder can inspect or resume it. Record its final status and session id in the report.
+- Archive only when the user explicitly asks to remove completed sessions. Use `archive_session`; never
+  delete app-managed worktrees manually. On Windows, archival can fail while the retained child
+  `copilot.exe` or parent app still holds the worktree directory. Report that error and leave the
+  session intact rather than retrying or forcing process termination.
 - Human-review sessions remain unarchived until the builder merges or abandons the PR and the workers
   complete stand-down.
 - The orchestrator session must remain resident while any human-review hold exists. The backlog pass
   may report completion and stop driving new issues, but the run remains live until every held PR is
-  merged or abandoned and its children are archived.
+  merged or abandoned and its workers send `stand-down-complete`. Completed child sessions remain
+  available afterward.

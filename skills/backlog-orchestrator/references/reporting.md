@@ -110,10 +110,10 @@ Suggested shape:
    folded, skipped+reason, moot, done). Flag any still `open` as needing triage **now** (the run is not
    complete while any remain open).
 6. **Learnings / context gaps:** recurring stale-context or assumption failures across issues.
-7. **Live workers:** human-review holds still running. In app mode include implementer/reviewer session
-   ids and archive completed children after `stand-down-complete`; in CLI mode include telex addresses
-   and leave bridges/terminals active until stand-down. State explicitly that the backlog pass is
-   reported but the orchestrator remains available until these holds resolve.
+7. **Worker sessions:** human-review holds still running plus completed app implementer/reviewer
+   session ids retained after `stand-down-complete`. In CLI mode include telex addresses and leave
+   bridges/terminals active until stand-down. State explicitly that the backlog pass is reported but
+   the orchestrator remains available until active holds resolve.
 
 To pull the field reports for synthesis:
 
