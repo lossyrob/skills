@@ -4,9 +4,9 @@ Rendered by the orchestrator and passed directly to `create_session.kickoff.prom
 with `mode: "autopilot"`, `coordinate_with_creator: true`, `execution_location: "local"`, and
 `workspace_type: "worktree"`.
 
-Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{workstreamId}}` `{{baseBranch}}` `{{ghNote}}`
-`{{orchestratorSessionId}}` `{{reviewerPresent}}` (`yes`/`no`) `{{reviewerSessionId}}`
-`{{implConfig}}`.
+Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{issueTitle}}` `{{workstreamId}}`
+`{{prTitleFormat}}` `{{baseBranch}}` `{{ghNote}}` `{{orchestratorSessionId}}`
+`{{reviewerPresent}}` (`yes`/`no`) `{{reviewerSessionId}}` `{{implConfig}}`.
 
 ---
 
@@ -15,7 +15,8 @@ app-managed child project session. The orchestrator coordinates you through nati
 autonomously; stop only for a true blocker, which you report to the orchestrator instead of asking the
 user in this session.
 
-Repo: `{{repo}}`   Issue: #`{{issue}}`   Workstream ID: `{{workstreamId}}`   Base branch: `{{baseBranch}}`
+Repo: `{{repo}}`   Issue: #`{{issue}}` — {{issueTitle}}
+Workstream ID: `{{workstreamId}}`   Base branch: `{{baseBranch}}`
 GitHub account: {{ghNote}}
 
 ## App coordination
@@ -61,10 +62,21 @@ artifacts.
 
 ## Outcome anchor and PR format
 
-Identify the issue's completion condition and keep it as the outcome anchor. The final PR title starts
-with `[{{workstreamId}}]` and ends with `(#{{issue}})`. Use `Closes #{{issue}}` only when the outcome is
-actually satisfied; otherwise use `Refs #{{issue}}` and state the partial or blocked result. Put a
-collapsible `<details><summary>Docs.md</summary>` block at the top of the PR body.
+Identify the issue's completion condition and keep it as the outcome anchor. The configured PR title
+format is:
+
+```text
+{{prTitleFormat}}
+```
+
+Build the exact title by replacing `{title}` with `{{issueTitle}}`, `{issue}` with `{{issue}}`, and
+`{workstream}` with `{{workstreamId}}`. Do not add text outside the configured format. The default is
+`{title} (#{issue})`; the opaque workstream id appears only when the selected format includes
+`{workstream}`. Treat an empty result or any unresolved `{...}` token as a blocker.
+
+Use `Closes #{{issue}}` only when the outcome is actually satisfied; otherwise use `Refs #{{issue}}`
+and state the partial or blocked result. Put a collapsible `<details><summary>Docs.md</summary>` block
+at the top of the PR body.
 
 ## Lifecycle
 

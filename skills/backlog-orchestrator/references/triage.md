@@ -36,6 +36,7 @@ issue can be low-care ("PAW Review is enough; my taste won't change the answer")
 | `care_knob` | `hard-stop-only` / `balanced` / `fail-toward-surfacing` | How aggressively the merge gate surfaces preference forks (see merge-gate.md). |
 | `posture` | `prototype` / `balanced` / `craft` | Projection horizon for "how much does this fork matter": prototype = short, craft = long. |
 | `base_branch` | branch name (optional) | If the issue targets a non-default base. |
+| `pr_title_format` | title template | The exact PR title shape after substituting `{title}`, `{issue}`, and optional `{workstream}` tokens. |
 
 ### Suggested tier defaults (confirm/edit with the user)
 
@@ -69,6 +70,27 @@ Capture each block as free text; it is injected verbatim into the worker prompt.
 are illustrative — substitute your current opus-high pins. Keep tiers consistent unless the user
 customizes a specific issue.
 
+### PR title format
+
+Choose a run-wide default during initialization, then allow tier or per-issue overrides. Recommend:
+
+```text
+{title} (#{issue})
+```
+
+Supported tokens are:
+
+| Token | Value |
+|---|---|
+| `{title}` | The GitHub issue title. |
+| `{issue}` | The issue number without `#`. |
+| `{workstream}` | The internal `<runid>-<n>` workstream id. Include this token only when the user wants an internal tracking id in PR titles. |
+
+Literal text is preserved, so `[{workstream}] {title} (#{issue})` restores the previous title shape.
+Before locking the manifest, reject unknown `{...}` tokens, substitute sample values, and require a
+non-empty result. Persist the resolved format on every issue row; workers must not infer a format from
+the workstream id.
+
 ## Step 4 — Persist the run manifest
 
 Persist the runtime selected by [runtime-selection.md](runtime-selection.md). Capture only that mode's
@@ -84,7 +106,8 @@ Create the run tables (the shared `todos` table is used separately for lifecycle
 
 ```sql
 CREATE TABLE IF NOT EXISTS run_meta (key TEXT PRIMARY KEY, value TEXT);
--- common keys: runid, runtime_mode (app|cli), repo, base_branch_default, gh_note, created_at
+-- common keys: runid, runtime_mode (app|cli), repo, base_branch_default,
+--              pr_title_format_default, gh_note, created_at
 -- app keys: project_id, orchestrator_session_id
 -- cli keys: repo_path, telex_backend, terminal_app, orchestrator_address
 
@@ -100,6 +123,7 @@ CREATE TABLE IF NOT EXISTS issues (
   care_knob        TEXT,              -- hard-stop-only | balanced | fail-toward-surfacing
   posture          TEXT,              -- prototype | balanced | craft
   base_branch      TEXT,
+  pr_title_format  TEXT NOT NULL,     -- resolved template; default: {title} (#{issue})
   status           TEXT DEFAULT 'pending',  -- pending|running|merged|human-review|blocked
   pr_number        INTEGER,
   -- App mode only:
@@ -112,11 +136,29 @@ CREATE TABLE IF NOT EXISTS issues (
 );
 ```
 
-Insert one row per selected issue, in execution order. Also add a lifecycle `todo` per issue (gerund
-title, e.g. "Driving issue #123 to terminal") so progress is visible in `todo_status`.
+Store `{title} (#{issue})` as `run_meta.pr_title_format_default` unless the user chooses another
+run-wide default. Insert one row per selected issue, in execution order, with its fully resolved
+`pr_title_format`. Also add a lifecycle `todo` per issue (gerund title, e.g. "Driving issue #123 to
+terminal") so progress is visible in `todo_status`.
+
+When resuming a manifest created before `pr_title_format` existed, inspect `PRAGMA table_info(issues)`.
+If the column is absent, add it and backfill before dispatching another worker:
+
+```sql
+ALTER TABLE issues ADD COLUMN pr_title_format TEXT;
+INSERT OR IGNORE INTO run_meta (key, value)
+VALUES ('pr_title_format_default', '{title} (#{issue})');
+UPDATE issues
+SET pr_title_format = (
+  SELECT value FROM run_meta WHERE key = 'pr_title_format_default'
+)
+WHERE pr_title_format IS NULL;
+```
+
+This keeps existing app and CLI runs resumable without restoring the opaque workstream prefix.
 
 ## Step 5 — Confirm and lock
 
-Echo the full manifest back to the user as a table (issue, size, reviewer, disposition, care, posture).
-Get a clear go-ahead before phase 3. Note explicitly which issues are `merge_disposition=human` (they
-will never auto-merge) so the user is not surprised at the end.
+Echo the full manifest back to the user as a table (issue, size, reviewer, disposition, care, posture,
+PR title format). Get a clear go-ahead before phase 3. Note explicitly which issues are
+`merge_disposition=human` (they will never auto-merge) so the user is not surprised at the end.

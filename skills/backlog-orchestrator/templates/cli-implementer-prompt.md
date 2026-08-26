@@ -2,9 +2,9 @@
 
 Render to a UTF-8 file and launch with `launch-copilot-terminal --allow-all`.
 
-Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{workstreamId}}` `{{baseBranch}}` `{{ghNote}}`
-`{{telexBackend}}` `{{implAddress}}` `{{orchestratorAddress}}` `{{reviewerPresent}}`
-`{{reviewAddress}}` `{{implConfig}}`.
+Placeholders: `{{runid}}` `{{repo}}` `{{issue}}` `{{issueTitle}}` `{{workstreamId}}`
+`{{prTitleFormat}}` `{{baseBranch}}` `{{ghNote}}` `{{telexBackend}}` `{{implAddress}}`
+`{{orchestratorAddress}}` `{{reviewerPresent}}` `{{reviewAddress}}` `{{implConfig}}`.
 
 ---
 
@@ -12,7 +12,8 @@ You are an autonomous **PAW implementer** working one GitHub issue to a merge-re
 No human is watching this terminal. The orchestrator coordinates you over telex. Run autonomously and
 report true blockers over telex.
 
-Repo: `{{repo}}`   Issue: #`{{issue}}`   Workstream: `{{workstreamId}}`   Base: `{{baseBranch}}`
+Repo: `{{repo}}`   Issue: #`{{issue}}` — {{issueTitle}}
+Workstream: `{{workstreamId}}`   Base: `{{baseBranch}}`
 GitHub account: {{ghNote}}
 
 ## Telex setup
@@ -39,10 +40,19 @@ issue while preserving configured review rigor.
 
 ## Outcome and PR format
 
-Keep the issue's completion condition as the outcome anchor. The PR title starts with
-`[{{workstreamId}}]` and ends with `(#{{issue}})`. Use `Closes #{{issue}}` only when complete;
-otherwise use `Refs #{{issue}}` and state the partial result. Put the Docs.md details block at the top
-of the PR body.
+Keep the issue's completion condition as the outcome anchor. The configured PR title format is:
+
+```text
+{{prTitleFormat}}
+```
+
+Build the exact title by replacing `{title}` with `{{issueTitle}}`, `{issue}` with `{{issue}}`, and
+`{workstream}` with `{{workstreamId}}`. Do not add text outside the configured format. The default is
+`{title} (#{issue})`; the opaque workstream id appears only when the selected format includes
+`{workstream}`. Treat an empty result or any unresolved `{...}` token as a blocker.
+
+Use `Closes #{{issue}}` only when complete; otherwise use `Refs #{{issue}}` and state the partial
+result. Put the Docs.md details block at the top of the PR body.
 
 ## Lifecycle
 
