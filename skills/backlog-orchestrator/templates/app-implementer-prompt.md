@@ -39,6 +39,7 @@ pr: <number-or-none>
 head_sha: <sha-or-none>
 field_report_url: <url-or-none>
 reason: <reason-or-none>
+event_id: <stable-idempotency-key>
 
 <concise details>
 ```
@@ -97,7 +98,13 @@ that registration window from a real failure. If the PR has no checks, treat it 
 ### 2. Review handshake
 
 If `{{reviewerPresent}}` is `yes`, send the reviewer a `review-ready` event only after CI is green.
-Include PR number, head SHA, repo, and issue.
+Include PR number, head SHA, repo, and issue, with event id `review-ready:<head_sha>`.
+
+Immediately schedule a one-time automation for five minutes later. Its prompt checks whether a
+matching `review-received` event arrived. If no receipt arrived, inspect the reviewer once with
+`get_session` and replay the exact same event id once; do not generate a new id or repeatedly poll.
+If the receipt arrives, clear the recovery automation. A replay is idempotent and must not cause a
+second review.
 
 When a `review-posted` event arrives:
 
@@ -105,7 +112,8 @@ When a `review-posted` event arrives:
 2. Address every blocking comment.
 3. Validate, push, and wait for green CI.
 4. Send `rereview-requested` with the new head SHA and a concise summary.
-5. End the turn and wait for the reviewer to wake you.
+5. Use event id `rereview-requested:<head_sha>` and the same one-time receipt/replay guard.
+6. End the turn and wait for the reviewer to wake you.
 
 Repeat until `review-approved`. Fetch and triage all non-blocking notes in the approval body: quick
 fix, substantive fix plus re-review, or explicit deferment.

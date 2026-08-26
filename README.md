@@ -141,6 +141,7 @@ Drive a backlog of GitHub issues to PRs autonomously and sequentially in either 
 - **Deferred human-review holds**: a PR routed to you stays live — app session automation or the CLI loop sentry keeps it mergeable until you merge, then reports back for stand-down
 - Field reports on each issue + a run ledger; a final report bubbles up pivots, preference debt, no-auto-merge decisions, deferred work, and learnings, plus a `process-feedback` → skill-improvement loop
 - Runtime-specific durable coordination and cleanup: native wakeups plus archival in app mode; telex push delivery plus terminal/worktree teardown in CLI mode
+- App review handoffs use deterministic receipts and one bounded replay to recover an idle-session wakeup miss without duplicate reviews
 
 **Requirements:** GitHub CLI authenticated for the target repo, [`paw-pr-lifecycle`](#paw-pr-lifecycle),
 [`spar`](#spar), the PAW workflow skills, and the `PAW-Review` custom agent. App mode also requires project

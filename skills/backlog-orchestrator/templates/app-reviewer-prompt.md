@@ -37,6 +37,7 @@ pr: <number-or-none>
 head_sha: <sha-or-none>
 field_report_url: <url-or-none>
 reason: <reason-or-none>
+event_id: <stable-idempotency-key>
 
 <concise details>
 ```
@@ -58,7 +59,11 @@ create or delete another worktree.
 1. **Register and wait.** Record the implementer id from `peer-registered`, then end the turn. A
    `review-ready` event supplies the PR and head SHA after CI is green.
 
-2. **Review.** Fetch the remote base and review the current PR head against the real merge-base. Run
+2. **Acknowledge the request.** Before reviewing, record its deterministic event id and immediately
+   send `review-received` with that id to the implementer. If the same event id is replayed, acknowledge
+   it again but do not start a duplicate review.
+
+3. **Review.** Fetch the remote base and review the current PR head against the real merge-base. Run
    the native PAW Review pipeline. Prefer inline comments for actionable findings on changed lines and
    use the body for the overall verdict and unanchorable findings.
 
@@ -68,7 +73,7 @@ create or delete another worktree.
    - Validate specialist `must-fix` findings: pre-existing issues are follow-up notes; preference forks
      belong to the orchestrator's human-floor gate rather than correctness blocking.
 
-3. **Submit the review autonomously.** Override the normal pending-review Human Control Point. Every
+4. **Submit the review autonomously.** Override the normal pending-review Human Control Point. Every
    pass ends with exactly one submitted, non-pending GitHub review, including a clean pass with no
    inline comments. Use a COMMENT event when the authenticated account authored the PR because GitHub
    rejects self-approval.
@@ -77,17 +82,18 @@ create or delete another worktree.
    it. For inline findings, use the reviews API with commit-pinned `comments[]` entries and validate
    every anchor against the current diff hunk.
 
-4. **Message the implementer.**
+5. **Message the implementer.**
 
    - Clean: send `review-approved` with PR and reviewed head SHA.
    - Blocking: send `review-posted` with PR and a pointer to the submitted review.
 
    End the turn after sending.
 
-5. **Re-review.** A `rereview-requested` event wakes this session. Inspect the new head, submit another
-   complete review, and send `review-approved` or `review-posted`. Repeat as needed.
+6. **Re-review.** A `rereview-requested` event wakes this session. Acknowledge its deterministic event
+   id with `review-received`, inspect the new head, submit another complete review, and send
+   `review-approved` or `review-posted`. Repeat as needed; ignore duplicate work for a replayed event id.
 
-6. **Stand down.** `human-review-pending` means remain available for late re-review messages.
+7. **Stand down.** `human-review-pending` means remain available for late re-review messages.
    `stand-down-merged` or `stand-down-human` is terminal: send the orchestrator `process-feedback`,
    then `stand-down-complete`, and end. Do not manually delete the app worktree; the orchestrator
    archives this child session after completion.

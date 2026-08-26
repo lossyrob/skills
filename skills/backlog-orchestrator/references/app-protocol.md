@@ -55,12 +55,15 @@ pr: <number-or-none>
 head_sha: <sha-or-none>
 field_report_url: <url-or-none>
 reason: <reason-or-none>
+event_id: <stable-idempotency-key>
 
 <one or more concise details>
 ```
 
 Receivers must reject events whose `run_id` or `issue` does not match their assignment. The
-orchestrator must also verify the sender session id against the manifest before acting.
+orchestrator must also verify the sender session id against the manifest before acting. For review
+requests, use deterministic event ids (`review-ready:<head_sha>` and `rereview-requested:<head_sha>`)
+and ignore a replay whose event id was already accepted.
 
 ## Message vocabulary
 
@@ -68,6 +71,7 @@ orchestrator must also verify the sender session id against the manifest before 
 |---|---|---|
 | `peer-registered` | orchestrator -> review | Supplies the issue's `implementer_session_id`; reviewer records it and waits for work. |
 | `review-ready` | impl -> review | PR is open, CI green, and ready for first review. Includes `{pr, head_sha, repo, issue}`. |
+| `review-received` | review -> impl | Reviewer accepted a review request and records its event id before beginning work. |
 | `review-posted` | review -> impl | A submitted GitHub review has blocking feedback. |
 | `review-approved` | review -> impl | A submitted review begins with `PAW Review: +1` marker and has no blocking feedback. |
 | `rereview-requested` | impl -> review | Feedback was addressed or substantive repairs were pushed; CI is green again. |
@@ -85,8 +89,20 @@ wakeups, session pointers, and state transitions.
 
 ## Idle workers and merge sentry
 
-App child sessions naturally go idle between turns. They wake when another session sends a native
-message. Waiting for a review or re-review therefore requires no loop.
+App child sessions naturally go idle between turns. They normally wake when another session sends a
+native message. Review requests use a lightweight receipt/replay guard because an immediate send can
+occasionally succeed without waking an idle child:
+
+1. Implementer sends `review-ready` or `rereview-requested` with a deterministic event id.
+2. Reviewer immediately replies `review-received` with that event id, then starts the review.
+3. Implementer schedules one one-time recovery wake for five minutes later. On that wake, if no
+   matching receipt arrived, inspect the reviewer once with `get_session` and replay the same event id
+   exactly once. If the receipt arrived, clear the recovery automation.
+4. Reviewer treats the replay as idempotent: acknowledge it but do not start a duplicate review for an
+   event id already accepted.
+
+This bounded recovery is app-specific. Do not add it to the CLI/telex path, whose store already
+buffers and redelivers messages.
 
 The implementer's merge sentry is different: it must detect CI failures, base movement, conflicts, and
 a human merge without an incoming message. Once the PR first becomes merge-ready, the implementer
@@ -97,6 +113,8 @@ otherwise ends the turn. Stand-down clears the automation with `save_session_aut
 ## Recovery and cleanup
 
 - Normal coordination is event-driven. Do not repeatedly call `get_session` while waiting.
+- For an unacknowledged app review request, use the single receipt/replay recovery above before
+  treating the reviewer as silent.
 - If a worker is unexpectedly silent, inspect it once with `get_session`. If it is awaiting plan
   approval, review the plan and use `respond_to_session_plan`; normal workers should be launched in
   autopilot specifically to avoid this state.
@@ -104,6 +122,10 @@ otherwise ends the turn. Stand-down clears the automation with `save_session_aut
   or sibling session already progressed.
 - After receiving `stand-down-complete`, archive that child with `archive_session`. Archiving is the
   app-owned worktree cleanup mechanism; workers must not manually delete app-managed worktrees.
+- If archival fails because the child process or a file handle still owns the worktree, leave the
+  worktree intact, wait for the child to become idle, and retry once. If it fails again, record a
+  cleanup blocker with the session id and error and surface it in the final report. Do not delete the
+  worktree manually or treat the run as fully closed.
 - Human-review sessions remain unarchived until the builder merges or abandons the PR and the workers
   complete stand-down.
 - The orchestrator session must remain resident while any human-review hold exists. The backlog pass

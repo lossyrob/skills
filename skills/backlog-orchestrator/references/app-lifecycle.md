@@ -79,6 +79,7 @@ For the current issue `#n` with its manifest row:
    head_sha: none
    field_report_url: none
    reason: none
+   event_id: peer-registered:<implementer session id>
 
    Implementer session id: <implementer session id>
    ```
@@ -86,6 +87,10 @@ For the current issue `#n` with its manifest row:
    The reviewer starts first so it is ready before the PR, but it may finish its initial turn and go
    idle before registration arrives. The immediate native message wakes it. The implementer is a
    general session that loads `paw-lite` from the prompt; do not launch it as the `PAW` agent.
+
+   Review handoffs follow the receipt/replay guard in [app-protocol.md](app-protocol.md): the
+   implementer expects `review-received`, uses one five-minute recovery wake, and replays an
+   unacknowledged deterministic event id at most once.
 
 4. **Wait for this issue's terminal event** (`merge-ready` or `blocked`). Native child-to-parent
    messages arrive as cross-session turns. A `merged` from a past human-pended issue may interleave;
@@ -124,6 +129,10 @@ For the current issue `#n` with its manifest row:
    automation and posting any required feedback/addendum. Verify the sender id, then call
    `archive_session` for that child. Do not archive a human-review worker merely because the issue is
    terminal for advancement.
+
+   If `archive_session` fails with a worktree/process file lock, wait for the child to be idle and
+   retry once. A second failure is a cleanup blocker: retain the session id and error in the ledger,
+   surface it in the final report, and leave the app-managed worktree untouched.
 
    A stand-down acknowledgement can arrive while a later issue is running. Archive it when received,
    update the ledger, and resume the active issue.
