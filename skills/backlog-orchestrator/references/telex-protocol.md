@@ -1,104 +1,74 @@
-# Telex protocol (run-specific contract)
+# Telex protocol (CLI run-specific contract)
 
-This file defines **only** the run-specific coordination contract for a backlog run: the addresses
-sessions use, how they are scoped/tagged, and the message vocabulary they exchange.
+This file defines the Copilot CLI coordination contract for a backlog run: addresses, scope, tags, and
+the message vocabulary exchanged by terminal workers.
 
-**Telex mechanics are owned by the telex skill, not this file.** How to bind, receive, send, reply,
-disposition, recover, and tear down changes with the telex binary and is documented by the installed
-telex — so do not repeat it here. Every session in a run (orchestrator, implementer, reviewer) is a
-**Copilot CLI session**, so each one loads the telex skill and follows the version-matched Copilot
-workflow it prints:
+**Telex mechanics are owned by the telex skill.** Every CLI session loads the version-matched
+instructions:
 
 ```sh
-telex skill            # underlying model + generic commands
-telex copilot skill    # the Copilot push-delivery workflow (source of truth for our sessions)
+telex skill
+telex copilot skill
 ```
 
-Key consequence for this skill: on Copilot CLI, telex uses **push delivery** — you bind the in-session
-bridge once and messages arrive as **turns**. You do **not** stand up a holder, run `telex wait`, or
-re-arm a waiter (those are the generic/fallback path). Follow `telex copilot skill` for the exact
-bind / receive / ack / send / detach syntax; this file assumes that workflow and layers the run
-contract on top of it.
+Copilot CLI uses telex push delivery: bind the in-session bridge once and messages arrive as turns.
+Do not run or re-arm `telex wait`. Follow `telex copilot skill` for exact bind, receive, acknowledge,
+send, recover, and detach syntax.
 
-## Backend / shared store
+## Backend and run identity
 
-All sessions in a run must reach each other, so they must share **one** telex store. Pick the run's
-telex backend once at start (a local sqlite exchange is a fine default), capture it in the run
-manifest, and inject the same value into every worker prompt. If you select a non-default backend,
-apply it consistently across all sessions per the telex skill's backend guidance — do not let some
-sessions fall back to a different default. Beyond "one shared store for the whole run", backend
-selection and any pinning mechanics belong to the telex skill, not here.
+All sessions in one run share exactly one telex store. Select it at setup, persist it as
+`run_meta.telex_backend`, and inject it into every CLI worker prompt.
 
-## Run id, scope, tags
+- **Run id:** a short slug such as `rb-2026-08-25a`.
+- **Scope:** `backlog:<runid>`.
+- **Tags:** `run:<runid>`, `repo:<owner/repo>`, `role:orchestrator|implementer|reviewer`, and
+  `issue:<n>` for workers.
 
-- **Run id (`<runid>`):** a short slug chosen at run start, e.g. `rb-2026-06-17a`. It namespaces every
-  address and tag so multiple backlog runs (and unrelated telex traffic on a shared store) never
-  collide. Always scope directory queries by this run so you do not see unrelated sessions.
-- **Scope:** `backlog:<runid>` on every attach.
-- **Tags:** `run:<runid>`, `repo:<owner/repo>`, `role:orchestrator|implementer|reviewer`,
-  `issue:<n>` (workers only).
+## Addresses
 
-## Address scheme
+| Session | Address |
+|---|---|
+| Orchestrator | `orchestrator:<runid>` |
+| Implementer | `impl:<runid>:issue-<n>` |
+| Reviewer | `review:<runid>:issue-<n>` |
 
-Each session binds **its own** address (so every message it sends is repliable) and knows the
-addresses of the peers it talks to.
+Each session binds its own address so messages are repliable. The orchestrator's push bridge receives
+worker messages as turns.
 
-| Session | Address | Directory description |
-|---|---|---|
-| Orchestrator | `orchestrator:<runid>` | `backlog orchestrator station for <owner/repo> run <runid>` |
-| Implementer (issue n) | `impl:<runid>:issue-<n>` | `PAW implementer for issue #<n> (<owner/repo>) run <runid>` |
-| Reviewer (issue n) | `review:<runid>:issue-<n>` | `PAW reviewer for issue #<n> (<owner/repo>) run <runid>` |
-
-Bind, scope, and tag each address using the Copilot bind verb from `telex copilot skill` (it also
-provisions the push bridge). After binding, the orchestrator receives worker messages as turns; there
-is no waiter to arm and no occupancy barrier to clear.
+Before triage launches any worker, the orchestrator must bind `orchestrator:<runid>` on the selected
+backend with scope `backlog:<runid>`, tags `run:<runid>,repo:<owner/repo>,role:orchestrator`, and an
+appropriate description, then provision the Copilot push bridge per `telex copilot skill`. Persist
+that address as `run_meta.orchestrator_address`.
 
 ## Message vocabulary
 
-All cross-session coordination uses the message **kinds** below. This is the semantic contract; the
-telex flags that carry it (kind, attention, disposition-required, structured metadata, body) come from
-the telex skill / `telex send --help`. Put the structured fields in the message metadata and a
-human-readable summary in the body, and mark anything the recipient must act on as
-disposition-required with an appropriate attention level.
-
-| kind | direction | attention | meaning / required metadata |
+| kind | direction | attention | meaning |
 |---|---|---|---|
-| `review-ready` | impl → review | `next-checkpoint` | PR is open, **CI green**, ready for first review. `{pr, headSha, repo, issue}` |
-| `review-posted` | review → impl | `next-checkpoint` | A GitHub review was submitted with blocking feedback. `{pr, verdict:"changes"}` |
-| `review-approved` | review → impl | `next-checkpoint` | `🐾 PAW Review: +1` submitted; no blocking feedback (may carry non-blocking notes). `{pr, headSha}` |
-| `rereview-requested` | impl → review | `next-checkpoint` | Implementer addressed feedback / pushed changes, **CI green**; please re-review. `{pr, headSha, summary}` |
-| `merge-ready` | impl → orchestrator | `interrupt` | Reviewer approved (if a reviewer exists) **and** merge sentry reports ready. The implementer has **already posted its field report** on the issue (so the gate and the builder can read it). `{pr, headSha, fieldReportUrl}` |
-| `blocked` | impl → orchestrator | `interrupt` | Hard blocker needing an orchestrator/human decision (issue amendment, repeated failure). `{pr?, reason}` |
-| `process-feedback` | impl/review → orchestrator | `background` | At finish/stand-down: feedback on the **process/skill itself** (telex instructions, prompt, config friction; what worked; concrete suggested edits). Not disposition-required. |
-| `human-review-pending` | orchestrator → impl, review | `interrupt` | Routed to human review; the orchestrator will **not** auto-merge. The implementer **keeps its sentry alive** (maintain merge-readiness, repair CI/conflicts) and **does not end**, until the human merges; the reviewer **stays available** (it may get a late `rereview-requested`). `{pr, reason}` |
-| `merged` | impl → orchestrator | `interrupt` | A PR the implementer was holding under `human-review-pending` has been **merged by the human**; the implementer requests stand-down. `{pr, mergeCommit?}` |
-| `stand-down-merged` | orchestrator → impl, review | `interrupt` | The PR is merged (auto-merge, or human-merge after `human-review-pending`). Stop the sentry, post a brief field-report **addendum** if anything changed since merge-ready, clean up, end. `{pr}` |
-| `stand-down-human` | orchestrator → impl, review | `interrupt` | Terminal stop **without** a pending merge — the issue is being abandoned / the PR closed / a blocker accepted, so there is nothing more to hold for. Stop, post a field-report addendum, clean up, end. `{pr?, reason}` |
+| `review-ready` | impl -> review | `next-checkpoint` | PR is open, CI green, and ready for first review. Metadata: `{pr, headSha, repo, issue}`. |
+| `review-posted` | review -> impl | `next-checkpoint` | Submitted GitHub review has blocking feedback. |
+| `review-approved` | review -> impl | `next-checkpoint` | Submitted review starts with `🐾 PAW Review: +1`; no blocking feedback remains. |
+| `rereview-requested` | impl -> review | `next-checkpoint` | Feedback or substantive repairs were pushed and CI is green again. |
+| `merge-ready` | impl -> orchestrator | `interrupt` | Review is approved when required, CI is green, merge state is clean, and field report already exists. |
+| `blocked` | impl -> orchestrator | `interrupt` | Hard blocker needs orchestrator or human action. |
+| `process-feedback` | impl/review -> orchestrator | `background` | Workflow feedback; not disposition-required. |
+| `human-review-pending` | orchestrator -> impl/review | `interrupt` | Route is human review; implementer keeps the sentry alive and reviewer remains available. |
+| `merged` | impl -> orchestrator | `interrupt` | Builder merged a human-pended PR; implementer requests stand-down. |
+| `stand-down-merged` | orchestrator -> impl/review | `interrupt` | PR merged; stop sentry, report feedback, clean up, and end. |
+| `stand-down-human` | orchestrator -> impl/review | `interrupt` | Terminal stop without merge; stop sentry, report feedback, clean up, and end. |
 
-Notes:
-- Each session sends from its own bound address, so a reply routes back automatically. Prefer replying
-  in-thread to keep a conversation together (the implementer's `merge-ready` thread is the natural
-  place for your `human-review-pending` / `stand-down-*` reply).
-- **Human-review handoff is deferred, not immediate.** When the gate routes an issue to human, you send
-  `human-review-pending` (not a stand-down) and **advance** to the next issue; the implementer keeps its
-  sentry alive so the PR stays mergeable while it waits for the builder. You will later receive a
-  `merged` from that implementer (whenever the builder merges) — only then do you send
-  `stand-down-merged`. So the current issue's `merge-ready`/`blocked` may interleave with a past
-  human-pended issue's `merged`; key off the sender / metadata to tell them apart.
-- The marker contract (`🐾 PAW Review: +1`, etc.) still appears in the **GitHub** review/PR bodies for
-  audit; telex only carries the wakeup + pointer. Workers should not poll those markers.
+Put structured fields in message metadata and a concise human-readable summary in the body. Mark
+actionable messages disposition-required. Act on a received turn, then disposition it by id.
 
-## Injecting addresses into workers
+Human-review handoff is deferred: send `human-review-pending`, advance to the next issue, and leave the
+terminal workers alive. The implementer later sends `merged`; only then send `stand-down-merged`.
+Messages from past held issues may interleave with the current issue, so identify them by sender and
+metadata.
 
-Worker launch prompts (generated from the templates) must embed: the worker's own address, the
-orchestrator address, the run id + scope + tags, the issue number, repo, tier config, and the run's
-telex backend. The worker binds **its own** address and provisions its push bridge exactly as above,
-following `telex copilot skill`. See [lifecycle.md](lifecycle.md) for how the orchestrator fills and
-launches them.
+The GitHub review and field report remain the auditable source of truth. Telex carries wakeups and
+pointers; workers do not poll GitHub comments for handoffs.
 
 ## Cleanup
 
-At end of run, tear down each session's telex binding using the detach verb from `telex copilot skill`,
-and retire the run's addresses so they drop from directory listings (see `telex address --help`). The
-mechanics live in the telex skill; the only run-specific part is that every `orchestrator:<runid>` /
-`impl:<runid>:*` / `review:<runid>:*` address should be retired.
+At full run completion, detach bridges and retire all run addresses using the verbs documented by
+`telex copilot skill` and `telex address --help`.

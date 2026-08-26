@@ -1,6 +1,6 @@
 # lossyrob-skills
 
-Reusable [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) skills.
+Reusable GitHub Copilot skills for the Copilot app and CLI, as documented per skill.
 
 ## Install
 
@@ -127,24 +127,27 @@ Operate PAW implementer and reviewer GitHub PR lifecycle loops on top of the `lo
 
 ### backlog-orchestrator
 
-Drive a backlog of GitHub issues to PRs autonomously and sequentially. The loaded session becomes an orchestrator that triages issues into S/M/L tiers, spawns PAW implementer (and optional PAW Review) worker terminals that coordinate over [telex](https://github.com/lossyrob/telex) instead of GitHub-comment polling, gates each PR through a preference/human-floor merge review, and auto-merges or routes to human review.
+Drive a backlog of GitHub issues to PRs autonomously and sequentially in either the GitHub Copilot app or Copilot CLI. The orchestrator detects the runtime, then uses app-native child sessions and messaging or terminal workers and telex while sharing triage, merge-gate, deferred-work, and reporting policy.
 
 **Trigger phrases:** "work through a backlog of issues autonomously", "run an autonomous issue-fixing pipeline", "orchestrate PAW sessions across many issues", "drive these issues to PRs"
 
 **Features:**
-- Four-phase model: telex station setup → interactive triage (S/M/L sizing + per-tier config) → sequential per-issue execution → merge gate + advance
-- Spawns an implementer (paw-lite, loaded as a skill) and an optional reviewer (launched as the `PAW-Review` agent with autonomous review submission) in their own iTerm2/Terminal.app or Windows Terminal sessions via [`launch-copilot-terminal`](#launch-copilot-terminal); they run the review handshake over telex (review-ready → review-posted → re-review → `🐾 +1`), not GitHub-comment polling
+- Four-phase model: runtime selection/setup → interactive triage (S/M/L sizing + per-tier config) → sequential per-issue execution → merge gate + advance
+- Human-readable PR titles by default, with a run-wide format and per-tier/per-issue overrides using issue, title, and optional workstream tokens
+- App mode creates isolated child project sessions and coordinates them with native cross-session messages; CLI mode launches isolated terminal/worktree sessions and coordinates them with telex
+- Both modes run the same implementer/reviewer handshake (review-ready → review-posted → re-review → `🐾 +1`) and the same GitHub audit trail
 - Last-line **merge gate**: an Opus subagent detects high-spread *preference forks* the builder should own (a filtered work-geometry lens, not a correctness re-review), tuned by a per-issue care-knob — auto-merges clear/low-spread PRs and routes preference-debt / constitution / human-floor PRs to human review
 - **Deferred-work tracking**: every carry-forward item is harvested at the gate (field report + diff markers) and driven to a terminal disposition (filed / folded / skipped / done / moot) — the run is not complete while any item is open
-- **Deferred human-review holds**: a PR routed to you stays live — the implementer's merge sentry keeps it mergeable (repairing CI/conflicts) until you merge, then reports back for stand-down
+- **Deferred human-review holds**: a PR routed to you stays live — app session automation or the CLI loop sentry keeps it mergeable until you merge, then reports back for stand-down
 - Field reports on each issue + a run ledger; a final report bubbles up pivots, preference debt, no-auto-merge decisions, deferred work, and learnings, plus a `process-feedback` → skill-improvement loop
-- Durable telex backend pinning so messages survive holder restarts and wake idle worker sessions
+- Runtime-specific durable coordination and lifecycle: native wakeups plus retained completed sessions in app mode; telex push delivery plus terminal/worktree teardown in CLI mode
+- App review handoffs use deterministic receipts and one bounded replay to recover an idle-session wakeup miss without duplicate reviews
 
-**Requirements:** macOS with iTerm2 or Terminal.app, or Windows with Windows Terminal, Copilot CLI on `PATH`,
-[telex](https://github.com/lossyrob/telex) on `PATH`, GitHub CLI authenticated for the target repo,
-and the installed skills [`launch-copilot-terminal`](#launch-copilot-terminal),
-[`paw-pr-lifecycle`](#paw-pr-lifecycle), [`loop`](#loop), [`spar`](#spar), plus the PAW workflow
-skills (paw-lite / paw-review-workflow) and the `PAW-Review` custom agent.
+**Requirements:** GitHub CLI authenticated for the target repo, [`paw-pr-lifecycle`](#paw-pr-lifecycle),
+[`spar`](#spar), the PAW workflow skills, and the `PAW-Review` custom agent. App mode also requires project
+child-session/messaging/automation tools. CLI mode also requires Copilot CLI,
+[telex](https://github.com/lossyrob/telex), [`launch-copilot-terminal`](#launch-copilot-terminal), and
+[`loop`](#loop).
 
 ### spar
 
