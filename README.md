@@ -162,6 +162,22 @@ Get a sharp second opinion from a different model before committing to a consequ
 
 **Requirements:** Copilot CLI with the `task` (subagent) tool and a second model available for the pairing subagent. Uses the `rubber-duck` agent type when available and falls back to a `general-purpose` subagent with the sparring role in its prompt; if the named default pairing model is unavailable, any model different from the driver works.
 
+### clear-workplace-writing
+
+Write, revise, or review workplace prose for engineers and leadership using a
+compact practical guide synthesized from public-domain writing sources and
+modern workplace-writing preferences.
+
+**Trigger phrases:** "improve this writing", "revise this document", "make this
+clearer", "review this memo", "write a status update", "edit this proposal"
+
+**Features:**
+- Direct editing for short prose and contained subagent editing for long documents or context-heavy sessions
+- One ordered practice guide that preserves facts, technical precision, uncertainty, and the author's voice
+- Strunk's core 1918 chapters, a cleaned rules-only Abbott edition, and qualified Spencer excerpts for selective source consultation
+- Explicit guidance against unsupported emphasis, negative parallelism, canned framing, repeated conclusions, and invented objections
+- Optional multi-perspective review through the existing `council` skill rather than a separate reviewer hierarchy
+
 ## License
 
 MIT
