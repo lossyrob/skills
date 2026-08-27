@@ -26,6 +26,28 @@ $launch = (Get-ChildItem "$env:USERPROFILE\.copilot" -Recurse -Filter 'Launch-Co
 `repo_path` (local checkout) and `repo` (`owner/repo`) come from `run_meta`. Workers create their own
 worktrees from `repo_path`, so launch them with that path as their working directory.
 
+Read `inherit_yolo` from `run_meta` once and build the host-specific shared worker autonomy arguments.
+`--yolo` inheritance is mandatory: if the orchestrator was launched with `--yolo`, every implementer
+and reviewer must receive it. Do not infer a different policy per issue.
+
+macOS:
+
+```bash
+worker_copilot_args=(--copilot-arg=--allow-all)
+if [[ $inherit_yolo == 1 ]]; then
+  worker_copilot_args+=(--copilot-arg=--yolo)
+fi
+```
+
+Windows:
+
+```powershell
+$workerAutonomyArgs = @("--allow-all")
+if ($inheritYolo) {
+  $workerAutonomyArgs += "--yolo"
+}
+```
+
 ## The per-issue loop
 
 For the current issue `#n` with its manifest row:
@@ -58,10 +80,10 @@ For the current issue `#n` with its manifest row:
      "$launch" --title "review #<n>" --color purple --cwd "<repo_path>" \
        --terminal "<terminal_app>" \
        --prompt-file "<...>/review-<n>.md" \
-       --copilot-arg=--allow-all --copilot-arg=--agent --copilot-arg=PAW-Review
+       "${worker_copilot_args[@]}" --copilot-arg=--agent --copilot-arg=PAW-Review
    fi
    "$launch" --title "impl #<n>" --color green --cwd "<repo_path>" \
-     --terminal "<terminal_app>" --prompt-file "<...>/impl-<n>.md" --copilot-arg=--allow-all
+     --terminal "<terminal_app>" --prompt-file "<...>/impl-<n>.md" "${worker_copilot_args[@]}"
    ```
 
    `--terminal auto` uses Terminal.app. Use the run manifest's `terminal_app` override (`iterm2` or
@@ -74,11 +96,12 @@ For the current issue `#n` with its manifest row:
 
    ```powershell
    if ($reviewerEnabled) {
+     $reviewerArgs = @($workerAutonomyArgs) + @("--agent","PAW-Review")
      & $launch -Title "review #<n>" -Color purple -Cwd "<repo_path>" `
-       -PromptFile "<...>\review-<n>.md" -CopilotArgs @("--allow-all","--agent","PAW-Review")
+       -PromptFile "<...>\review-<n>.md" -CopilotArgs $reviewerArgs
    }
    & $launch -Title "impl #<n>" -Color green -Cwd "<repo_path>" `
-     -PromptFile "<...>\impl-<n>.md" -CopilotArgs @("--allow-all")
+     -PromptFile "<...>\impl-<n>.md" -CopilotArgs $workerAutonomyArgs
    ```
 
    The **reviewer launches as the `PAW-Review` custom agent** (`--agent PAW-Review`) so it runs the real
@@ -87,7 +110,7 @@ For the current issue `#n` with its manifest row:
    **implementer does NOT use `--agent PAW`** — its `Workflow Identity` is `paw-lite` (a lighter skill),
    whereas the `PAW` agent runs the full spec→…→pr workflow; paw-lite is loaded via the prompt instead.
    Add `--model <model>` through the host launcher's Copilot-argument syntax when the issue config pins
-   a session model.
+   a session model. Preserve the shared autonomy arguments, including inherited `--yolo`.
 
 4. **Wait for this issue's terminal message** on your station (`merge-ready` or `blocked`). It arrives
       as a telex turn via your push bridge (telex-protocol.md). A `merged` from a **past** human-pended issue may also

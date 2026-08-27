@@ -79,7 +79,8 @@ Create the run tables (the shared `todos` table is used separately for lifecycle
 
 ```sql
 CREATE TABLE IF NOT EXISTS run_meta (key TEXT PRIMARY KEY, value TEXT);
--- run_meta keys: runid, repo, repo_path, telex_backend, terminal_app, base_branch_default, gh_note, created_at
+-- run_meta keys: runid, repo, repo_path, telex_backend, terminal_app, base_branch_default,
+--   gh_note, inherit_yolo, created_at
 -- telex_backend: the single telex store every session in this run shares (e.g. a local sqlite
 --   exchange, or a named backend). Choose it at triage and inject it into every worker prompt as
 --   {{telexBackend}}; backend selection/mechanics live in the telex skill (see telex-protocol.md).
@@ -102,6 +103,39 @@ CREATE TABLE IF NOT EXISTS issues (
   outcome_note     TEXT
 );
 ```
+
+Detect the orchestrator's launch mode once and persist it in `run_meta`.
+
+macOS:
+
+```bash
+loader_command=$(ps -p "$COPILOT_LOADER_PID" -o command= 2>/dev/null)
+if printf '%s\n' "$loader_command" | grep -Eq '(^|[[:space:]])--yolo([[:space:]]|$)'; then
+  inherit_yolo=1
+else
+  inherit_yolo=0
+fi
+```
+
+Windows:
+
+```powershell
+$loader = if ($env:COPILOT_LOADER_PID) {
+  Get-CimInstance Win32_Process `
+    -Filter "ProcessId=$([int]$env:COPILOT_LOADER_PID)" `
+    -ErrorAction SilentlyContinue
+}
+$inheritYolo = [bool](
+  $loader -and
+  $loader.CommandLine -match '(?i)(?:^|\s)--yolo(?:\s|$)'
+)
+```
+
+Store `inherit_yolo` as `"1"` or `"0"`. When it is `"1"`, every implementer and reviewer terminal
+launched for this run must include `--yolo` in addition to its normal arguments. A resumed orchestrator
+still inherits correctly because the loader command line retains the original `--yolo` flag. If the
+loader process or command line cannot be inspected, surface that before worker launch rather than
+silently recording `"0"`.
 
 Insert one row per selected issue, in execution order. Also add a lifecycle `todo` per issue (gerund
 title, e.g. "Driving issue #123 to terminal") so progress is visible in `todo_status`.
