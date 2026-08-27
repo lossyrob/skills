@@ -31,8 +31,11 @@ Making no changes is a valid result when the passage already meets the guide.
 ### Contained editor
 
 Use one strong general-purpose subagent when a document is large enough to
-crowd the main context, when writing is a side task in a context-heavy session,
-or when the user asks for a contained review.
+crowd the main context or when the user asks for a contained review. Delegate
+only when the source is substantially self-contained or when you can provide a
+context packet containing all material facts, decisions, terminology,
+constraints, and intended emphasis. Prefer direct editing when the surrounding
+conversation materially informs the document.
 
 Prefer a file path over embedding a long document in the subagent prompt. Give
 the editor:
@@ -40,6 +43,7 @@ the editor:
 - the source path and requested output path;
 - the path to `core-practices.md`;
 - the audience, purpose, requested response, and explicit user constraints;
+- any context packet needed to make the source self-contained;
 - whether to revise, comment, or do both.
 
 Require the editor to:

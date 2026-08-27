@@ -1,6 +1,15 @@
 # Evaluation notes
 
-Use these cases to compare writing with and without the skill. Keep the source facts constant. A useful evaluation should reward reader usefulness, not merely mechanical rule compliance.
+Use these cases to compare three conditions:
+
+1. no writing skill;
+2. the original skill at commit `57efef5`;
+3. the current candidate.
+
+Keep the prompt, model, source facts, and judging procedure constant. Treat
+`57efef5` as the regression control: a candidate should beat or tie it on real
+work examples rather than merely outperforming no guidance. A useful evaluation
+should reward reader usefulness, not mechanical rule compliance.
 
 Score each result from 1 to 5 on:
 

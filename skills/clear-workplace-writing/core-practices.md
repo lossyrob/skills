@@ -27,7 +27,30 @@ Before drafting or revising, identify:
 Use these answers to decide what belongs in the document. Do not force every
 document into the same voice or template. [Spencer §28, §66, §67]
 
+### Choose an initial shape from the purpose
+
+Use purpose to select a starting information order:
+
+| Purpose | Initial shape |
+|---|---|
+| Explain | governing idea -> mental model -> mechanism -> example -> limits |
+| Propose | problem -> recommendation -> mechanism -> evidence -> tradeoffs -> risks -> validation |
+| Decide | recommendation -> criteria -> alternatives -> consequences -> evidence -> uncertainty |
+| Report status | current state -> material change -> consequence -> risk or blocker -> next action or ask |
+| Report incident | impact -> current state -> cause or current evidence -> mitigation -> remaining uncertainty -> follow-up |
+| Instruct | condition -> action -> expected result -> exception or recovery |
+| Persuade | claim -> reasons -> evidence -> consequence or requested action |
+
+These are starting structures rather than templates. Change the order when the
+reader's task, the evidence, or safety requires it. Address an objection only
+when the audience is likely to hold it and the contrast materially helps the
+argument.
+
 ### Calibrate for the audience
+
+Classify readers by their information need rather than their title. A leader
+reviewing a deep architecture proposal may need an engineering treatment; an
+engineer reviewing a funding proposal may need a leadership treatment.
 
 **Engineering readers** usually need behavior, mechanism, constraints,
 invariants, interfaces, failure modes, evidence, and unresolved questions.
