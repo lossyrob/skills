@@ -22,7 +22,7 @@ function Test-LoopTransientGhError {
     return $false
   }
 
-  return $ErrorText -match "(?i)(TLS handshake timeout|timeout|timed out|connection reset|connection refused|network is unreachable|no such host|error connecting to api\.github\.com|check your internet connection|temporarily unavailable|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|Could not resolve to a Repository with the name)"
+  return $ErrorText -match "(?i)(TLS handshake timeout|timeout|timed out|connection reset|connection refused|network is unreachable|no such host|error connecting to api\.github\.com|check your internet connection|temporarily unavailable|HTTP (?:502|503|504)|502 Bad Gateway|503 Service Unavailable|504 Gateway Timeout|Could not resolve to a Repository with the name)"
 }
 
 function Test-LoopGitHubRateLimitError {
