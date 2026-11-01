@@ -60,6 +60,11 @@ only the link, not the repository copy. Update the skills with
 them. If a skill with that name already exists in `$CODEX_HOME/skills`, remove
 or rename it before creating the link.
 
+Codex can load the skills' Agent Skills instructions, but a skill's own
+requirements still apply. Workflows that explicitly call Copilot CLI, its
+session files, or Copilot-only tools need those dependencies and are not
+made Codex-native just by installing the skill.
+
 
 ## Skills
 
