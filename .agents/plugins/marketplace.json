@@ -1,0 +1,20 @@
+{
+  "name": "lossyrob-skills",
+  "interface": {
+    "displayName": "lossyrob-skills"
+  },
+  "plugins": [
+    {
+      "name": "lossyrob-skills",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/lossyrob/skills"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
