@@ -1,8 +1,10 @@
 # lossyrob-skills
 
-Reusable [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) skills.
+Reusable skills for [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) and Codex.
 
 ## Install
+
+### Copilot CLI
 
 If you previously installed the plugin directly from the repository, uninstall
 that copy first:
@@ -19,6 +21,45 @@ copilot plugin marketplace add lossyrob/skills
 copilot plugin marketplace browse lossyrob-skills
 copilot plugin install lossyrob-skills@lossyrob-skills
 ```
+
+### Codex
+
+#### Install the complete plugin
+
+Add this repo as a Codex plugin marketplace:
+
+```bash
+codex plugin marketplace add lossyrob/skills
+```
+
+Then open Codex's Plugins Directory, choose the `lossyrob-skills` marketplace,
+and install the plugin. To refresh it after a repository update, run
+`codex plugin marketplace upgrade lossyrob-skills`. You can enable or disable
+the complete plugin from the Plugins Directory.
+
+#### Install or disable individual skills
+
+The plugin installs its skills as a bundle. To choose individual skills, link
+only the skill folders you want into Codex's personal skills directory. This
+example installs `loop`; replace `loop` with any folder under `skills/`:
+
+```bash
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+SOURCE="$CODEX_HOME/skill-sources/lossyrob-skills"
+SKILLS="$CODEX_HOME/skills"
+
+mkdir -p "$CODEX_HOME/skill-sources" "$SKILLS"
+git clone https://github.com/lossyrob/skills.git "$SOURCE"
+ln -s "$SOURCE/skills/loop" "$SKILLS/loop"
+```
+
+Repeat the `ln -s` line for each skill you want. To disable one, remove its
+link from `$CODEX_HOME/skills` (for example, `rm "$SKILLS/loop"`). This removes
+only the link, not the repository copy. Update the skills with
+`git -C "$SOURCE" pull`, then restart Codex or start a new session to reload
+them. If a skill with that name already exists in `$CODEX_HOME/skills`, remove
+or rename it before creating the link.
+
 
 ## Skills
 
