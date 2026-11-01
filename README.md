@@ -1,8 +1,10 @@
 # lossyrob-skills
 
-Reusable [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) skills.
+Reusable skills for [Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) and Codex.
 
 ## Install
+
+### Copilot CLI
 
 If you previously installed the plugin directly from the repository, uninstall
 that copy first:
@@ -19,6 +21,61 @@ copilot plugin marketplace add lossyrob/skills
 copilot plugin marketplace browse lossyrob-skills
 copilot plugin install lossyrob-skills@lossyrob-skills
 ```
+
+### Codex
+
+#### Install the complete plugin
+
+Add this repo as a Codex plugin marketplace:
+
+```bash
+codex plugin marketplace add lossyrob/skills
+```
+
+Then open Codex's Plugins Directory, choose the `lossyrob-skills` marketplace,
+and install the plugin. To refresh it after a repository update, run
+`codex plugin marketplace upgrade lossyrob-skills`. You can enable or disable
+the complete plugin from the Plugins Directory.
+
+#### Install or disable individual skills in local Codex
+
+Codex loads personal skills from `~/.agents/skills`. Link only the skill folders
+you want there. This example installs `clear-workplace-writing`:
+
+```bash
+SOURCE="$HOME/.codex/skill-sources/lossyrob-skills"
+SKILLS="$HOME/.agents/skills"
+
+mkdir -p "$HOME/.codex/skill-sources" "$SKILLS"
+git clone https://github.com/lossyrob/skills.git "$SOURCE"
+ln -s "$SOURCE/skills/clear-workplace-writing" "$SKILLS/clear-workplace-writing"
+```
+
+To disable it, remove the link (for example,
+`rm "$SKILLS/clear-workplace-writing"`). This removes only the link, not the
+repository copy. Update the skill with `git -C "$SOURCE" pull`, then start a
+new Codex session to reload it.
+
+#### Use skills in Codex Cloud
+
+Personal skills on your computer are not synced to Codex Cloud. For cloud tasks,
+put the skill in the selected project repository at
+`.agents/skills/clear-workplace-writing/SKILL.md` and commit it. Skills stored
+in a repository are available to that repository's cloud tasks.
+
+#### Use skills in ChatGPT
+
+In ChatGPT, open **Plugins > Skills > Create > Upload from your computer** and
+upload a ZIP of the `clear-workplace-writing` skill folder, including its
+`SKILL.md` and supporting files. After ChatGPT scans and installs it, the skill
+can be used in eligible ChatGPT chats. You can share it with your workspace from
+the skill's menu. ChatGPT and Codex skill installations may need to be managed
+separately.
+
+The instructions and supporting resources are portable Agent Skills. A skill's
+own requirements still apply; workflows that explicitly call Copilot CLI, its
+session files, or Copilot-only tools need those dependencies and are not made
+Codex-native just by installing the skill.
 
 ## Skills
 
